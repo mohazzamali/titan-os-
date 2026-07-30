@@ -1,0 +1,8 @@
+[package]
+name = "nexus-client"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+ed25519-compact = "2.3.1"
+sha3 = "0.10.8"

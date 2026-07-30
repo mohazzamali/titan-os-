@@ -1,0 +1,27 @@
+# =========================
+# NEXUS MASTER .GITIGNORE
+# =========================
+
+# 1. Rust / Cargo (Core & Client)
+target/
+**/*.rs.bk
+Cargo.lock
+
+# 2. Node.js / Next.js (Edge Portal)
+node_modules/
+.next/
+out/
+build/
+.env
+.env.local
+.env.*.local
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# 3. OS specific
+.DS_Store
+Thumbs.db*.bin
+*.img
+*.pcap
+*.log
