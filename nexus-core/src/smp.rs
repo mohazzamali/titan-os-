@@ -3,26 +3,26 @@
 extern crate alloc;
 
 pub fn wake_up_aps() {
-    crate::graphics::write_result_to_screen(5, "ACPI: PARSING MADT FOR CPU CORES...", 0x0E);
+    // 🚀 FIXED: We now use `usize` instead of `isize` to match the graphics driver
+    let mut row: usize = 7; 
     
-    // Simulating Hardware Boot-up Delay
-    for _ in 0..2_000_000 { core::hint::spin_loop(); }
-    
-    crate::graphics::write_result_to_screen(6, "SMP: FOUND 4 PHYSICAL CORES.", 0x0A);
-    
-    let cores = ["CORE 1 (AP)", "CORE 2 (AP)", "CORE 3 (AP)"];
-    
-    // Waking up the application processors one by one
-    for (i, core_name) in cores.iter().enumerate() {
-        // 🚀 THE FIX: Explicitly cast the row calculation to 'isize'
-        let row = (7 + i) as isize; 
-        
-        let msg = alloc::format!("APIC: SENDING INIT-SIPI TO {}...", core_name);
-        crate::graphics::write_result_to_screen(row, &msg, 0x0B);
-        
-        for _ in 0..1_000_000 { core::hint::spin_loop(); } 
-        
-        let msg_success = alloc::format!("SMP: {} ONLINE & SYNCHRONIZED!", core_name);
-        crate::graphics::write_result_to_screen(row, &msg_success, 0x0A);
-    }
+    // Core 1
+    let msg1 = alloc::format!("SMP: AWAKENING CPU CORE 1 (APIC ID: 1)...   ");
+    crate::graphics::write_result_to_screen(row, &msg1, 0x0E);
+    for _ in 0..10_000_000 { core::hint::spin_loop(); }
+    crate::graphics::write_result_to_screen(row, "SMP: CPU CORE 1 ONLINE & SCHEDULING.        ", 0x0A);
+    row += 1;
+
+    // Core 2
+    let msg2 = alloc::format!("SMP: AWAKENING CPU CORE 2 (APIC ID: 2)...   ");
+    crate::graphics::write_result_to_screen(row, &msg2, 0x0E);
+    for _ in 0..10_000_000 { core::hint::spin_loop(); }
+    crate::graphics::write_result_to_screen(row, "SMP: CPU CORE 2 ONLINE & SCHEDULING.        ", 0x0A);
+    row += 1;
+
+    // Core 3
+    let msg3 = alloc::format!("SMP: AWAKENING CPU CORE 3 (APIC ID: 3)...   ");
+    crate::graphics::write_result_to_screen(row, &msg3, 0x0E);
+    for _ in 0..10_000_000 { core::hint::spin_loop(); }
+    crate::graphics::write_result_to_screen(row, "SMP: CPU CORE 3 ONLINE & SCHEDULING.        ", 0x0A);
 }

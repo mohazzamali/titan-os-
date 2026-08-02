@@ -2,51 +2,64 @@
 
 extern crate alloc;
 
-// 🚀 BARE-METAL PERCEPTRON (Using Fixed-Point Math to prevent FPU crashes)
+// 🚀 BARE-METAL PERCEPTRON (Fixed-Point Math Engine)
 pub struct Perceptron {
-    // Weights and Bias scaled by 100 (e.g., 75 = 0.75 weight)
     weights: [i32; 3], 
     bias: i32,
 }
 
 impl Perceptron {
     pub const fn new() -> Self {
-        // Pre-trained Neural Weights for "Network Threat Detection"
+        // 🚀 RECALIBRATED WEIGHTS (The Intelligence Upgrade)
+        // W1 (Packet Size) is now low impact. W2 (Errors) and W3 (Latency) are high impact.
         Perceptron {
-            weights: [75, -25, 90], // W1 (Packet Size), W2 (Errors), W3 (Latency)
-            bias: -1000,            // Threshold Bias
+            weights: [2, 100, 5], 
+            bias: -500,            
         }
     }
 
-    // The Activation Function
     pub fn predict(&self, inputs: [i32; 3]) -> i32 {
         let mut sum = self.bias;
-        
-        // Summation: (W1*I1) + (W2*I2) + (W3*I3) + Bias
         for i in 0..3 {
             sum += self.weights[i] * inputs[i];
         }
         
-        // Step Activation: If sum is high, it's a THREAT (1), else SECURE (0)
+        // If Sum > 5000, it's a DDoS attack
         if sum > 5000 { 1 } else { 0 }
     }
 }
 
 pub static NEXUS_BRAIN: Perceptron = Perceptron::new();
 
-pub fn run_inference(_task_id: u64, inputs: [i32; 3]) -> i32 {
-    crate::graphics::write_result_to_screen(10, "AI: NEURAL NETWORK (PERCEPTRON) ENGAGED!    ", 0x0D); // Pink
+pub fn run_inference(_task_id: u64, inputs: [i32; 3], row: usize) -> i32 {
+    let msg = alloc::format!("AI: TENSOR COMPUTE ENGAGED -> INPUTS {:?}  ", inputs);
+    crate::graphics::write_result_to_screen(row, &msg, 0x0D); 
     
-    // Simulate Neural Tensor Computation
-    for _ in 0..3_000_000 { core::hint::spin_loop(); }
+    // Simulating heavy core load
+    for _ in 0..8_000_000 { core::hint::spin_loop(); }
     
     let prediction = NEXUS_BRAIN.predict(inputs);
     
     if prediction == 1 {
-        crate::graphics::write_result_to_screen(11, "AI: INFERENCE -> [ THREAT DETECTED ]        ", 0x0C); // Red Alert
+        crate::graphics::write_result_to_screen(row + 1, "AI: INFERENCE -> [ THREAT DETECTED - DROP PACKETS ] ", 0x0C); 
     } else {
-        crate::graphics::write_result_to_screen(11, "AI: INFERENCE -> [ SYSTEM SECURE ]          ", 0x0A); // Green Safe
+        crate::graphics::write_result_to_screen(row + 1, "AI: INFERENCE -> [ SYSTEM SECURE - ROUTE TRAFFIC ]  ", 0x0A); 
     }
     
     prediction
+}
+
+pub fn execute_ai_scan() {
+    // Shifted up to Row 17
+    crate::graphics::write_result_to_screen(17, "AI: LOADING NEXUS NEURAL WEIGHTS TO CPU L1 CACHE...", 0x0E); 
+
+    // Scenario 1: Normal Network Traffic 
+    let safe_telemetry = [150, 0, 12];
+    run_inference(1, safe_telemetry, 18); // Writes to 18 and 19
+
+    for _ in 0..10_000_000 { core::hint::spin_loop(); } // Pause for visual effect
+
+    // Scenario 2: DDoS / Malicious Traffic 
+    let threat_telemetry = [1500, 50, 999];
+    run_inference(2, threat_telemetry, 20); // Writes to 20 and 21. (Rows 22, 23, 24 are now safe for the shell!)
 }

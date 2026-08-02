@@ -1,48 +1,70 @@
-// nexus-core/src/pci.rs
-
 use x86_64::instructions::port::Port;
+extern crate alloc;
+use alloc::vec::Vec;
 
-pub unsafe fn read_pci_u32(bus: u8, slot: u8, func: u8, offset: u8) -> u32 {
-    let address = 0x80000000 | ((bus as u32) << 16) | ((slot as u32) << 11) | ((func as u32) << 8) | (offset as u32 & 0xFC);
-    Port::<u32>::new(0xCF8).write(address);
-    Port::<u32>::new(0xCFC).read()
+const CONFIG_ADDRESS: u16 = 0xCF8;
+const CONFIG_DATA: u16 = 0xCFC;
+
+#[derive(Debug, Clone, Copy)]
+pub struct PciDevice {
+    pub bus: u8,
+    pub device: u8,
+    pub vendor_id: u16,
+    pub device_id: u16,
+    pub class_id: u8,
 }
 
-pub unsafe fn write_pci_u32(bus: u8, slot: u8, func: u8, offset: u8, data: u32) {
-    let address = 0x80000000 | ((bus as u32) << 16) | ((slot as u32) << 11) | ((func as u32) << 8) | (offset as u32 & 0xFC);
-    Port::<u32>::new(0xCF8).write(address);
-    Port::<u32>::new(0xCFC).write(data);
+// 🚀 EXPOSED TO E1000.RS
+pub fn read_pcie_u32(bus: u8, device: u8, func: u8, offset: u8) -> u32 {
+    let address = 1u32 << 31 
+        | ((bus as u32) << 16) 
+        | ((device as u32) << 11) 
+        | ((func as u32) << 8) 
+        | (offset as u32 & 0xFC);
+    
+    unsafe {
+        let mut port_addr = Port::<u32>::new(CONFIG_ADDRESS);
+        let mut port_data = Port::<u32>::new(CONFIG_DATA);
+        
+        port_addr.write(address);
+        port_data.read()
+    }
 }
 
-// 🚀 HARDWARE BACKDOOR: Scans for E1000 and strictly extracts the I/O Port Base (bypassing MMIO Paging!)
-pub unsafe fn scan_bus_and_get_e1000_io_base() -> Option<(u16, u8, u8)> {
-    crate::graphics::write_result_to_screen(20, "PCI: INITIATING DEEP PCIe BUS SCAN...       ", 0x0E); 
+// 🚀 PHASE 1: THE ENUMERATION ALGORITHM
+pub fn scan_buses() -> Vec<PciDevice> {
+    let mut devices = Vec::new();
     
     for bus in 0..=255 {
-        for slot in 0..32 {
-            let vendor_id = read_pci_u32(bus, slot, 0, 0) & 0xFFFF;
-            if vendor_id == 0x8086 {
-                let device_id = (read_pci_u32(bus, slot, 0, 0) >> 16) & 0xFFFF;
-                if device_id == 0x100E { // E1000 GIGABIT NIC
-                    
-                    // Scan BAR0 through BAR5 to find the I/O Space BAR (identified by bit 0 being 1)
-                    for bar_idx in 0..6 {
-                        let offset = 0x10 + (bar_idx * 4);
-                        let bar = read_pci_u32(bus, slot, 0, offset);
-                        
-                        if bar & 1 == 1 { // 🚀 Found an I/O Space BAR!
-                            let io_base = (bar & 0xFFFC) as u16;
-                            
-                            // Enable I/O Space (Bit 0) and Bus Master (Bit 2)
-                            let mut cmd = read_pci_u32(bus, slot, 0, 0x04);
-                            cmd |= 0x00000005; 
-                            write_pci_u32(bus, slot, 0, 0x04, cmd);
-                            
-                            crate::graphics::write_result_to_screen(20, "PCI: HW I/O PORTS & BUS MASTERING VERIFIED! ", 0x0A);
-                            return Some((io_base, bus, slot));
-                        }
-                    }
-                }
+        for device in 0..32 {
+            let id_reg = read_pcie_u32(bus, device, 0, 0);
+            let vendor_id = (id_reg & 0xFFFF) as u16;
+            
+            if vendor_id != 0xFFFF {
+                let class_reg = read_pcie_u32(bus, device, 0, 0x08);
+                let class_id = ((class_reg >> 24) & 0xFF) as u8;
+                let device_id = ((id_reg >> 16) & 0xFFFF) as u16;
+                
+                devices.push(PciDevice {
+                    bus, device, vendor_id, device_id, class_id
+                });
+            }
+        }
+    }
+    devices
+}
+
+// 🚀 LEGACY COMPATIBILITY
+pub fn scan_bus_and_get_e1000_io_base() -> Option<(u32, u8, u8)> {
+    for bus in 0..=255 {
+        for device in 0..32 {
+            let id_reg = read_pcie_u32(bus, device, 0, 0);
+            let vendor_id = (id_reg & 0xFFFF) as u16;
+            let device_id = ((id_reg >> 16) & 0xFFFF) as u16;
+            
+            if vendor_id == 0x8086 && device_id == 0x100E {
+                let bar0 = read_pcie_u32(bus, device, 0, 0x10);
+                return Some((bar0, bus, device));
             }
         }
     }

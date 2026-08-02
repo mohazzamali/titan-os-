@@ -2,7 +2,7 @@
 
 use x86_64::registers::model_specific::{Efer, EferFlags, LStar, Star, SFMask};
 use x86_64::registers::rflags::RFlags;
-use x86_64::structures::gdt::SegmentSelector; // 🚀 Imported explicitly
+use x86_64::structures::gdt::SegmentSelector;
 use x86_64::PrivilegeLevel;
 use core::arch::global_asm;
 extern crate alloc;
@@ -13,17 +13,18 @@ pub fn init_syscalls() {
         Efer::update(|flags| flags.insert(EferFlags::SYSTEM_CALL_EXTENSIONS));
 
         // 🚀 THE RPL FIX: Create new selectors using the correct index and Ring3 privilege
-        let user_code_r3 = SegmentSelector::new(selectors.user_code.index(), PrivilegeLevel::Ring3);
-        let user_data_r3 = SegmentSelector::new(selectors.user_data.index(), PrivilegeLevel::Ring3);
+        let user_code_r3 = SegmentSelector::new(selectors.user_code_selector.index(), PrivilegeLevel::Ring3);
+        let user_data_r3 = SegmentSelector::new(selectors.user_data_selector.index(), PrivilegeLevel::Ring3);
 
         Star::write(
             user_code_r3,
             user_data_r3,
-            selectors.kernel_code,
-            selectors.kernel_data,
+            selectors.code_selector,
+            selectors.data_selector,
         ).unwrap();
 
-        LStar::write(x86_64::VirtAddr::new(syscall_entry as u64));
+        // 🚀 Fixed function pointer cast for modern Rust compilers
+        LStar::write(x86_64::VirtAddr::new(syscall_entry as *const () as u64));
         SFMask::write(RFlags::INTERRUPT_FLAG); // Disable interrupts inside syscall
     }
 }

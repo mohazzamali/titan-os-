@@ -1,38 +1,62 @@
-// nexus-core/src/vfs.rs
-
 extern crate alloc;
 use alloc::string::String;
 use alloc::vec::Vec;
-use spin::Mutex;
 use lazy_static::lazy_static;
+use spin::Mutex;
 
+// 🚀 LOGICAL FILE ABSTRACTION
 #[derive(Clone)]
-pub struct FileDescriptor {
-    pub filename: String,
+pub struct NexusFile {
+    pub name: String,
     pub data: Vec<u8>,
+    pub size: usize,
 }
 
+// 🚀 THE IN-MEMORY FILE ALLOCATION TABLE (FAT)
 lazy_static! {
-    pub static ref VIRTUAL_FS: Mutex<Vec<FileDescriptor>> = Mutex::new(Vec::new());
+    pub static ref NEXUS_FS: Mutex<Vec<NexusFile>> = Mutex::new(Vec::new());
 }
 
-pub fn execute_external_app(filename: &str) {
-    crate::graphics::write_result_to_screen(9, "VFS: INITIATING FILE FETCH PROTOCOL...    ", 0x0B);
+pub fn init() {
+    let mut fs = NEXUS_FS.lock();
     
-    // 1. Send DMA request to NVMe (Using CONTROLLER to match nvme.rs)
-    if let Some(file_data) = crate::nvme::read_block(1024, 4096) {
-        crate::graphics::write_result_to_screen(10, "NVMe: EXECUTING DIRECT MEMORY ACCESS (DMA)", 0x0D);
-        
-        let fd = FileDescriptor {
-            filename: String::from(filename),
-            data: file_data.clone(),
-        };
-        VIRTUAL_FS.lock().push(fd);
-        crate::graphics::write_result_to_screen(11, "VFS: FILE LOADED INTO DYNAMIC HEAP (RAM)  ", 0x0A);
+    // 💾 Pre-loading Sector Memory into logical 'Files'
+    fs.push(NexusFile {
+        name: String::from("smart_contract.wasm"),
+        data: alloc::vec![0x00, 0x61, 0x73, 0x6D, 0x01, 0x00, 0x00, 0x00, 0x0A, 0x04, 0x01],
+        size: 11,
+    });
 
-        // 2. Handover to Sandbox (Passing correct &str and 2 arguments)
-        crate::wasm_engine::execute_wasm(filename, &file_data);
-    } else {
-        crate::graphics::write_result_to_screen(10, "VFS ERROR: NVMe DRIVE OFFLINE!            ", 0x04);
+    fs.push(NexusFile {
+        name: String::from("neural_weights.bin"),
+        data: alloc::vec![0x02, 0x64, 0x05, 0xFF, 0xA1],
+        size: 5,
+    });
+}
+
+// 🚀 SYSTEM CALLS FOR THE SHELL
+pub fn list_files() -> Vec<(String, usize)> {
+    let fs = NEXUS_FS.lock();
+    fs.iter().map(|f| (f.name.clone(), f.size)).collect()
+}
+
+pub fn read_file(name: &str) -> Option<Vec<u8>> {
+    let fs = NEXUS_FS.lock();
+    for f in fs.iter() {
+        if f.name == name {
+            return Some(f.data.clone());
+        }
     }
+    None
+}
+
+// 🚀 COMPATIBILITY FIX: For the old 'deploy' command in shell.rs
+pub fn load_file_from_disk(name: &str) -> Option<NexusFile> {
+    let fs = NEXUS_FS.lock();
+    for f in fs.iter() {
+        if f.name == name {
+            return Some(f.clone());
+        }
+    }
+    None
 }
