@@ -13,13 +13,15 @@ lazy_static! {
         tss.interrupt_stack_table[DOUBLE_FAULT_IST_INDEX as usize] = {
             const STACK_SIZE: usize = 4096 * 5;
             static mut STACK: [u8; STACK_SIZE] = [0; STACK_SIZE];
-            let stack_start = VirtAddr::from_ptr(unsafe { &raw const STACK });
+            // 🚀 ROOT FIX: Removed unnecessary `unsafe` block for &raw const
+            let stack_start = VirtAddr::from_ptr(&raw const STACK);
             stack_start + STACK_SIZE
         };
         tss.privilege_stack_table[0] = {
             const KERNEL_STACK_SIZE: usize = 4096 * 5;
             static mut KERNEL_STACK: [u8; KERNEL_STACK_SIZE] = [0; KERNEL_STACK_SIZE];
-            let stack_start = VirtAddr::from_ptr(unsafe { &raw const KERNEL_STACK });
+            // 🚀 ROOT FIX: Removed unnecessary `unsafe` block for &raw const
+            let stack_start = VirtAddr::from_ptr(&raw const KERNEL_STACK);
             stack_start + KERNEL_STACK_SIZE
         };
         tss
@@ -30,15 +32,14 @@ lazy_static! {
     pub static ref GDT: (GlobalDescriptorTable, Selectors) = {
         let mut gdt = GlobalDescriptorTable::new();
         
-        // 🚀 Ring-0 (Kernel Mode)
+        // Ring-0 (Kernel Mode)
         let code_selector = gdt.add_entry(Descriptor::kernel_code_segment());
         let data_selector = gdt.add_entry(Descriptor::kernel_data_segment());
         
-        // 🚀 THE FIX: Ring-3 (User Mode) - DATA MUST COME BEFORE CODE FOR `SYSRET`
+        // Ring-3 (User Mode)
         let user_data_selector = gdt.add_entry(Descriptor::user_data_segment());
         let user_code_selector = gdt.add_entry(Descriptor::user_code_segment());
         
-        // TSS
         let tss_selector = gdt.add_entry(Descriptor::tss_segment(&TSS));
 
         (gdt, Selectors { 
