@@ -1,46 +1,38 @@
 // nexus-core/src/syscall.rs
-
 use x86_64::registers::model_specific::{Efer, EferFlags, LStar, Star, SFMask};
 use x86_64::registers::rflags::RFlags;
 use x86_64::structures::gdt::SegmentSelector;
 use x86_64::PrivilegeLevel;
 use core::arch::global_asm;
-extern crate alloc;
 
 pub fn init_syscalls() {
     let selectors = &crate::gdt::GDT.1;
     unsafe {
         Efer::update(|flags| flags.insert(EferFlags::SYSTEM_CALL_EXTENSIONS));
 
-        // 🚀 THE RPL FIX: Create new selectors using the correct index and Ring3 privilege
         let user_code_r3 = SegmentSelector::new(selectors.user_code_selector.index(), PrivilegeLevel::Ring3);
         let user_data_r3 = SegmentSelector::new(selectors.user_data_selector.index(), PrivilegeLevel::Ring3);
 
-        Star::write(
-            user_code_r3,
-            user_data_r3,
-            selectors.code_selector,
-            selectors.data_selector,
-        ).unwrap();
-
-        // 🚀 Fixed function pointer cast for modern Rust compilers
+        Star::write(user_code_r3, user_data_r3, selectors.code_selector, selectors.data_selector).unwrap();
         LStar::write(x86_64::VirtAddr::new(syscall_entry as *const () as u64));
-        SFMask::write(RFlags::INTERRUPT_FLAG); // Disable interrupts inside syscall
+        SFMask::write(RFlags::INTERRUPT_FLAG); 
     }
 }
 
 #[no_mangle]
-pub extern "C" fn handle_syscall_rust(sys_num: u64, arg1: u64) {
+pub extern "C" fn handle_syscall_rust(sys_num: u64, _arg1: u64) {
     if sys_num == 99 {
-        let msg = alloc::format!("🛡️ SYSCALL 99: APP REQUESTED CPU TIME [{}] ", arg1);
-        crate::graphics::write_result_to_screen(20, &msg, 0x0D); // Pink
+        crate::graphics::write_result_to_screen(16, "SEC: SYSCALL 99 CAUGHT! ELEVATING TO RING-0.", 0x0B); // Cyan
+        // 🚀 ONLY NOW is it safe to execute the Wasm Hypervisor!
+        crate::wasm_engine::execute_smart_contract("smart_contract.wasm");
     }
 }
 
+// Low-level assembly to handle the CPU transition safely
 global_asm!(
     ".global syscall_entry",
     "syscall_entry:",
-    "push rcx", // CPU saved return address here
+    "push rcx", // CPU saved Return RIP here
     "push r11", // CPU saved RFLAGS here
     "push rbp",
     "push rbx",
@@ -51,13 +43,7 @@ global_asm!(
     "pop rbp",
     "pop r11",
     "pop rcx",
-    
-    // The Page Fault Bypass: Safely jump back to Kernel Thread
-    "push r11",
-    "popfq",    
-    "jmp rcx"   
+    "sysretq" // Hardware instruction to jump back to Ring-3
 );
 
-extern "C" {
-    fn syscall_entry();
-}
+extern "C" { fn syscall_entry(); }

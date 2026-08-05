@@ -1,5 +1,4 @@
 // nexus-core/src/process.rs
-
 extern crate alloc;
 use alloc::vec::Vec;
 
@@ -21,8 +20,8 @@ pub struct Task {
 
 impl Task {
     pub fn new(id: u64, entry_point: u64) -> Self {
-        // 🚀 THE WARNING FIX: Removed 'mut' here
-        let stack = alloc::vec![0; 8192]; // 8KB Stack
+        // 🚀 CRITICAL FIX: Increased Task Stack from 8KB to 128KB to support smoltcp routing!
+        let stack = alloc::vec![0; 131_072]; 
         let stack_end = stack.as_ptr() as u64 + stack.len() as u64;
         
         let mut rsp = (stack_end - 512) & !0xF; 

@@ -1,43 +1,52 @@
-use crate::gdt;
-use crate::println;
+// nexus-core/src/usermode.rs
+use x86_64::registers::model_specific::{Efer, EferFlags, LStar, Star, SFMask};
+use x86_64::registers::rflags::RFlags;
+use x86_64::VirtAddr;
+use core::arch::naked_asm;
 
-// 🎯 THE FIX 1: Allocate a REAL 4KB Stack in RAM for User Mode
-static mut USER_STACK: [u8; 4096] = [0; 4096];
-
-pub unsafe fn enter_user_mode() -> ! {
-    // Point RSP to the top of our newly allocated real memory stack
-    let user_stack = core::ptr::addr_of!(USER_STACK) as u64 + 4096; 
-    
-    let ss = gdt::GDT.1.user_data.0 as u64;
-    let cs = gdt::GDT.1.user_code.0 as u64;
-    
-    // 🎯 THE FIX 2: Disable Hardware Interrupts in Ring 3 (0x002 instead of 0x202)
-    // Yeh APIC timer ko Ring 3 mein CPU crash karne se rokega
-    let rflags = 0x002u64; 
-    
-    let rip = user_task as *const () as u64;
-
-    println!("\n[ KERNEL ] Jumping into Ring 3 (User Space)...");
-
-    core::arch::asm!(
-        "push rax", "push rcx", "push rdx", "push r15", "push rdi", "iretq",
-        in("rax") ss, in("rcx") user_stack, in("rdx") rflags, in("r15") cs, in("rdi") rip,
-        options(noreturn)
+// 🚀 Hardware Syscall Entry Point (Fires when Ring-3 requests Kernel action)
+#[unsafe(naked)]
+pub extern "C" fn syscall_handler() {
+    naked_asm!(
+        // Syscall clobbers RCX and R11. We must save state manually.
+        "push rcx",
+        "push r11",
+        "push rdi",
+        "push rsi",
+        
+        // Dummy handler logic for now
+        "mov al, 0x20", 
+        
+        "pop rsi",
+        "pop rdi",
+        "pop r11",
+        "pop rcx",
+        "sysretq" // 🚀 Return securely back to Ring-3
     );
 }
 
-#[no_mangle]
-pub extern "C" fn user_task() -> ! {
-    // 🎯 WE ARE IN RING 3! 
-    // Firing a System Call to knock on the Kernel's door.
+// 🚀 Configuring Model Specific Registers for Fast Syscalls
+pub fn init_syscall_hardware() {
+    let selectors = &crate::gdt::GDT.1;
+
     unsafe {
-        core::arch::asm!(
-            "syscall",
-            out("rcx") _, 
-            out("r11") _, 
-        );
+        // Enable System Call Extensions in the CPU
+        Efer::update(|efer| efer.insert(EferFlags::SYSTEM_CALL_EXTENSIONS));
+
+        // Load the Star register with User and Kernel segment boundaries
+        Star::write(
+            selectors.user_code,
+            selectors.user_data,
+            selectors.kernel_code,
+            selectors.kernel_data,
+        ).unwrap();
+
+        // Load LStar with the memory address of our Syscall Handler
+        LStar::write(VirtAddr::new(syscall_handler as u64));
+
+        // Mask interrupts when entering Ring-0 via syscall to prevent race conditions
+        SFMask::write(RFlags::INTERRUPT_FLAG);
     }
     
-    // Mission Accomplished. Rest here safely.
-    loop { core::hint::spin_loop(); }
+    crate::graphics::write_result_to_screen(6, "SYS: CPU MSRs SECURED FOR RING-3 SYSCALLS...", 0x0A);
 }
