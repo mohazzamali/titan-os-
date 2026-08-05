@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Nexus Titan Cloud</title>
+    <style>
+        body { background-color: #0d1117; color: #c9d1d9; font-family: 'Courier New', monospace; margin: 0; padding: 40px; }
+        .container { max-width: 800px; margin: 0 auto; background: #161b22; padding: 30px; border-radius: 10px; border: 1px solid #30363d; box-shadow: 0 0 20px rgba(0, 255, 204, 0.1); }
+        h1 { color: #00ffcc; text-align: center; font-size: 2.5em; text-transform: uppercase; letter-spacing: 2px; }
+        .metrics { display: flex; justify-content: space-between; background: #0d1117; padding: 20px; border-radius: 8px; border: 1px solid #30363d; margin-bottom: 30px; }
+        .metric-box { text-align: center; }
+        .metric-box h3 { margin: 0; color: #8b949e; font-size: 1em; }
+        .metric-box p { margin: 10px 0 0 0; font-size: 1.5em; font-weight: bold; color: #58a6ff; }
+        .btn { display: block; width: 100%; padding: 20px; font-size: 1.2em; font-weight: bold; color: #0d1117; background-color: #00ffcc; border: none; border-radius: 5px; cursor: pointer; transition: 0.3s; font-family: inherit; text-transform: uppercase; }
+        .btn:hover { background-color: #00ccaa; box-shadow: 0 0 15px #00ffcc; }
+        .terminal { background: #010409; padding: 20px; border-radius: 5px; margin-top: 20px; border: 1px solid #30363d; min-height: 150px; font-size: 0.9em; color: #3fb950; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>☁️ Nexus Titan Cloud</h1>
+        
+        <div class="metrics">
+            <div class="metric-box"><h3>Global Nodes</h3><p>1 Active</p></div>
+            <div class="metric-box"><h3>Network TVL</h3><p>930 NXC</p></div>
+            <div class="metric-box"><h3>Security</h3><p>W^X Locked</p></div>
+        </div>
+
+        <button class="btn" onclick="deployCode()" id="deployBtn">🚀 Deploy Smart Contract to Swarm</button>
+
+        <div class="terminal" id="terminal-log">
+            > SYSTEM INITIALIZED.<br>
+            > AWAITING DEPLOYMENT DIRECTIVES...<br>
+        </div>
+    </div>
+
+    <script>
+        async function deployCode() {
+            const logBox = document.getElementById('terminal-log');
+            const btn = document.getElementById('deployBtn');
+            
+            btn.innerText = "⏳ DEPLOYING TO BARE-METAL...";
+            btn.style.backgroundColor = "#d29922";
+            logBox.innerHTML += "<br>> UPLOADING WASM PAYLOAD TO CLOUD API...";
+
+            try {
+                const response = await fetch('/api/deploy', { method: 'POST' });
+                const result = await response.text();
+                logBox.innerHTML += `<br>> ${result}`;
+                
+                if(response.ok) {
+                    btn.innerText = "✅ DEPLOYMENT SUCCESSFUL";
+                    btn.style.backgroundColor = "#238636";
+                } else {
+                    btn.innerText = "❌ DEPLOYMENT FAILED";
+                    btn.style.backgroundColor = "#da3633";
+                }
+            } catch (err) {
+                logBox.innerHTML += `<br>> ❌ FATAL ERROR: ${err}`;
+                btn.innerText = "❌ NETWORK ERROR";
+            }
+            
+            setTimeout(() => {
+                btn.innerText = "🚀 Deploy Smart Contract to Swarm";
+                btn.style.backgroundColor = "#00ffcc";
+            }, 3000);
+        }
+    </script>
+</body>
+</html>

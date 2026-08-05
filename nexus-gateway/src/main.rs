@@ -1,72 +1,125 @@
-// nexus-gateway/src/main.rs
+use crossterm::{
+    event::{self, Event, KeyCode},
+    execute,
+    terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
+};
+use ratatui::{
+    backend::CrosstermBackend,
+    layout::{Constraint, Direction, Layout, Alignment},
+    style::{Color, Modifier, Style},
+    text::{Line, Span},
+    widgets::{Block, Borders, Paragraph, List, ListItem},
+    Terminal, Frame,
+};
+use std::{io, net::TcpStream, io::Write, time::Duration};
 
-use std::env;
-use std::io::{Read, Write};
-use std::net::{TcpListener, TcpStream, UdpSocket};
+fn main() -> Result<(), io::Error> {
+    // Terminal Setup
+    enable_raw_mode()?;
+    let mut stdout = io::stdout();
+    execute!(stdout, EnterAlternateScreen)?;
+    let backend = CrosstermBackend::new(stdout);
+    let mut terminal = Terminal::new(backend)?;
 
-fn main() {
-    let args: Vec<String> = env::args().collect();
-    let mode = if args.len() > 1 { &args[1] } else { "master" };
+    let mut logs = vec![
+        "SYSTEM ONLINE.".to_string(),
+        "ESTABLISHING SECURE CONNECTION TO SWARM...".to_string(),
+        "WAITING FOR DIRECTIVES...".to_string(),
+    ];
 
-    println!("==================================================");
-    println!("🦅 NEXUS GLOBAL P2P GATEWAY ONLINE");
-    println!("⚙️  MODE: {}", mode.to_uppercase());
-    println!("==================================================\n");
+    // Main Event Loop
+    loop {
+        terminal.draw(|f| draw_ui(f, &logs))?;
 
-    if mode == "master" {
-        // 🚀 MASTER MODE: Listens to QEMU and routes to the Internet
-        let tcp_listener = TcpListener::bind("0.0.0.0:7777").unwrap();
-        println!("🌐 [MESH] Listening for Global Peers on TCP port 7777...");
+        if event::poll(Duration::from_millis(100))? {
+            if let Event::Key(key) = event::read()? {
+                match key.code {
+                    KeyCode::Char('q') => {
+                        break; 
+                    }
+                    KeyCode::Char('d') => {
+                        // 🚀 FIRE THE PAYLOAD TO THE OS
+                        logs.push("> INITIATING DEPLOYMENT TO BARE-METAL NODE...".to_string());
+                        
+                        let wasm_payload: [u8; 40] = [
+                            0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00, 
+                            0x01, 0x05, 0x01, 0x60, 0x00, 0x01, 0x7f,       
+                            0x03, 0x02, 0x01, 0x00,                         
+                            0x07, 0x0b, 0x01, 0x07, 0x65, 0x78, 0x65, 0x63, 
+                            0x75, 0x74, 0x65, 0x00, 0x00, 
+                            0x0a, 0x06, 0x01, 0x04, 0x00, 0x41, 0x01, 0x0b  
+                        ];
 
-        let udp_socket = UdpSocket::bind("127.0.0.1:9988").unwrap();
-        println!("📡 [LOCAL] Listening for Bare-Metal OS on UDP 9988...");
-
-        // Wait for a remote peer to connect before accepting OS traffic
-        println!("⏳ Waiting for a Peer to join the swarm...");
-        let (mut peer_stream, peer_addr) = tcp_listener.accept().unwrap();
-        println!("🤝 [MESH] PEER CONNECTED FROM: {}! Swarm is active.", peer_addr);
-
-        let mut buf = [0u8; 2048];
-        loop {
-            // 1. Catch the packet from QEMU
-            let (size, _) = udp_socket.recv_from(&mut buf).unwrap();
-            let frame = &buf[..size];
-
-            // 2. Verify it is a Custom NEXUS Frame (0x88B5)
-            if size >= 14 && frame[12] == 0x88 && frame[13] == 0xB5 {
-                println!("📥 [LOCAL] Intercepted NEXUS Frame from OS!");
-                println!("🚀 [MESH] Routing raw frame across TCP P2P network...");
-                
-                // 3. Blast it across the TCP Network to the connected Peer
-                peer_stream.write_all(frame).unwrap();
-            }
-        }
-    } else {
-        // 🚀 PEER MODE: Simulates a completely different computer on the internet
-        let target_ip = if args.len() > 2 { &args[2] } else { "127.0.0.1:7777" };
-        println!("🔗 [MESH] Dialing Nexus Master Node at {}...", target_ip);
-        
-        let mut stream = TcpStream::connect(target_ip).expect("CRITICAL: Failed to connect to Master Node");
-        println!("✅ [MESH] Successfully connected to the Global Swarm!\n");
-
-        let mut buf = [0u8; 2048];
-        loop {
-            // Wait for data to arrive from across the network
-            match stream.read(&mut buf) {
-                Ok(size) if size > 0 => {
-                    let frame = &buf[..size];
-                    let payload = String::from_utf8_lossy(&frame[14..]);
-                    println!("------------------------------------------------");
-                    println!("🚨 [INCOMING P2P TRAFFIC DETECTED]");
-                    println!("📏 Frame Size: {} bytes", size);
-                    println!("💎 DECODED PAYLOAD: {}", payload.trim_matches(char::from(0)));
-                    println!("------------------------------------------------");
-                }
-                _ => {
-                    println!("⚠️ Swarm connection lost.");
-                    break;
+                        match TcpStream::connect("127.0.0.1:9999") {
+                            Ok(mut stream) => {
+                                if stream.write_all(&wasm_payload).is_ok() {
+                                    logs.push("[OK] PAYLOAD INJECTED VIA DPI FIREWALL!".to_string());
+                                } else {
+                                    logs.push("[ERROR] FAILED TO WRITE TO SOCKET.".to_string());
+                                }
+                            }
+                            Err(_) => {
+                                logs.push("[ERROR] NODE OFFLINE. IS NEXUS OS RUNNING?".to_string());
+                            }
+                        }
+                    }
+                    _ => {}
                 }
             }
         }
     }
+
+    // Terminal Teardown
+    disable_raw_mode()?;
+    execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
+    terminal.show_cursor()?;
+    Ok(())
+}
+
+fn draw_ui(f: &mut Frame, logs: &[String]) {
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .margin(2)
+        .constraints([Constraint::Length(3), Constraint::Min(10), Constraint::Length(3)])
+        .split(f.size());
+
+    // --- HEADER ---
+    let header = Paragraph::new(Line::from(vec![
+        Span::styled("⚡ NEXUS TITAN ", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
+        Span::styled(":: GLOBAL DEPLOYMENT GATEWAY", Style::default().fg(Color::DarkGray)),
+    ]))
+    .alignment(Alignment::Center)
+    .block(Block::default().borders(Borders::ALL).style(Style::default().fg(Color::Cyan)));
+    f.render_widget(header, chunks[0]);
+
+    // --- MAIN SPLIT (METRICS + LOGS) ---
+    let middle_chunks = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Percentage(30), Constraint::Percentage(70)])
+        .split(chunks[1]);
+
+    // METRICS PANEL
+    let metrics = vec![
+        ListItem::new("Nodes Online : 1 (Local)"),
+        ListItem::new("Network TVL  : 930 NXC"),
+        ListItem::new("Trust Score  : 100%"),
+        ListItem::new(""),
+        ListItem::new("Wasm Jail    : SECURED"),
+        ListItem::new("W^X Memory   : LOCKED"),
+    ];
+    let metrics_list = List::new(metrics)
+        .block(Block::default().title(" SWARM METRICS ").borders(Borders::ALL).style(Style::default().fg(Color::Green)));
+    f.render_widget(metrics_list, middle_chunks[0]);
+
+    // LOGS PANEL
+    let log_items: Vec<ListItem> = logs.iter().map(|l| ListItem::new(l.as_str())).collect();
+    let logs_list = List::new(log_items)
+        .block(Block::default().title(" DEPLOYMENT LOGS ").borders(Borders::ALL).style(Style::default().fg(Color::Yellow)));
+    f.render_widget(logs_list, middle_chunks[1]);
+
+    // --- FOOTER COMMANDS ---
+    let footer = Paragraph::new("Press [d] to Deploy Wasm Payload  |  Press [q] to Quit")
+        .alignment(Alignment::Center)
+        .block(Block::default().borders(Borders::ALL).style(Style::default().fg(Color::DarkGray)));
+    f.render_widget(footer, chunks[2]);
 }

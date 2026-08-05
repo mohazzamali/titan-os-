@@ -1,5 +1,5 @@
 // nexus-core/src/wasm_engine.rs
-// INDUSTRIAL GRADE WASM EXECUTOR (Binary Parser + Micro-Decoder + STRICT SANDBOX)
+// INDUSTRIAL GRADE WASM EXECUTOR WITH DYNAMIC MEMORY (AI & LLM SUPPORT)
 
 #![allow(dead_code)]
 extern crate alloc;
@@ -9,18 +9,45 @@ use alloc::string::String;
 
 const WASM_MAGIC: [u8; 4] = [0x00, 0x61, 0x73, 0x6D]; // "\0asm"
 const WASM_VERSION: [u8; 4] = [0x01, 0x00, 0x00, 0x00]; // Version 1
-const WASM_PAGE_SIZE: usize = 65536; // 64 KB Strict Sandbox Limit
+pub const WASM_PAGE_SIZE: usize = 65536; // 64 KB Strict Sandbox Base
 
-// 🛡️ THE SECURITY JAIL: Isolated Memory Buffer for Wasm
+// 🛡️ THE UPGRADED DYNAMIC MEMORY JAIL (For Heavy AI Tensors)
 pub struct WasmSandboxMemory {
     pub buffer: Vec<u8>,
+    pub current_pages: usize,
+    pub max_pages: usize, // e.g., 16384 pages = 1 GB RAM for AI 
 }
 
 impl WasmSandboxMemory {
-    pub fn new() -> Self {
+    // Allocate the initial memory payload
+    pub fn new(initial_pages: usize, max_pages: usize) -> Self {
+        let initial_size = initial_pages * WASM_PAGE_SIZE;
+        crate::graphics::write_result_to_screen(15, &format!("SEC: ALLOCATING {} BYTES DYNAMIC RAM...  ", initial_size), 0x0B);
+        
         WasmSandboxMemory {
-            buffer: alloc::vec![0; WASM_PAGE_SIZE], // Pre-allocate isolated 64KB
+            buffer: alloc::vec![0; initial_size],
+            current_pages: initial_pages,
+            max_pages,
         }
+    }
+    
+    // 🚀 THE AI SCALING ENGINE: Implementing the memory.grow opcode
+    pub fn grow(&mut self, additional_pages: usize) -> i32 {
+        if self.current_pages + additional_pages > self.max_pages {
+            crate::graphics::write_result_to_screen(18, "SEC: MEMORY GROW FAILED - OOM PREVENTED!    ", 0x04);
+            return -1; // Wasm standard failure code for Out of Memory
+        }
+
+        let new_size = (self.current_pages + additional_pages) * WASM_PAGE_SIZE;
+        crate::graphics::write_result_to_screen(16, &format!("JIT: MEMORY.GROW INVOKED -> {} BYTES  ", new_size), 0x0E);
+        
+        // Dynamically request more physical RAM from the kernel heap!
+        self.buffer.resize(new_size, 0);
+        
+        let old_pages = self.current_pages;
+        self.current_pages += additional_pages;
+        
+        old_pages as i32 
     }
     
     // Malicious code prevention: Check bounds before any memory read
@@ -85,8 +112,6 @@ pub fn translate_wasm_to_x86(wasm_bytes: &[u8]) -> JitMemory {
     jit.emit(&[0x48, 0x89, 0xE5]); // mov rbp, rsp
     
     // 🚀 THE SECURITY INJECTION: Bitmasking hardware registers (Sandboxing)
-    // By enforcing 'and eax, 0x0000FFFF', the CPU physically cannot address 
-    // memory outside the 64KB Wasm boundary, regardless of what the payload says!
     jit.emit(&[0x25, 0xFF, 0xFF, 0x00, 0x00]); 
     
     let mut opcodes_translated = 0;
@@ -114,14 +139,24 @@ pub fn translate_wasm_to_x86(wasm_bytes: &[u8]) -> JitMemory {
 }
 
 pub fn execute_ota_payload(payload: &[u8]) {
-    if let Some(_module) = parse_wasm_payload(payload) {
-        crate::graphics::write_result_to_screen(15, "SEC: MEMORY JAIL (64KB) ALLOCATED.          ", 0x0B);
-        let _sandbox = WasmSandboxMemory::new(); // 🛡️ Activate the Jail
+    // 🚀 THE FIX: UNWRAP THE NEXUS FABRIC FRAME
+    // If the payload has our custom Nexus Protocol header (0x88 0xB5), strip the first 15 bytes!
+    let actual_wasm = if payload.len() >= 15 && payload[12] == 0x88 && payload[13] == 0xB5 {
+        crate::graphics::write_result_to_screen(12, "DPI: SECURE FRAME DETECTED. STRIPPING HEADERS... ", 0x0B);
+        &payload[15..]
+    } else {
+        payload
+    };
+
+    if let Some(_module) = parse_wasm_payload(actual_wasm) {
+        // 🚀 Activate the Dynamic AI Jail (1 Page init, up to 16384 pages / 1GB)
+        let _sandbox = WasmSandboxMemory::new(1, 16384); 
         
-        let jit_module = translate_wasm_to_x86(payload);
-        let _result = unsafe { jit_module.execute() };
+        let jit_module = translate_wasm_to_x86(actual_wasm);
+        let result = unsafe { jit_module.execute() };
         
-        let proof_hash = 0xD5F1BD10283D32B9u64;
-        crate::consensus::verify_compute(proof_hash);
+        // 🚀 SECURE MESH HOOK: Send the result to the network with Ed25519 Signature!
+        crate::fabric::send_compute_result(9999, result as u32);
+        crate::consensus::verify_compute(result);
     }
 }

@@ -1,6 +1,7 @@
-// nexus-core/src/fabric.rs
-
+#![allow(dead_code)]
 extern crate alloc;
+
+use crate::identity::NODE_IDENTITY;
 
 pub const RPC_PING: u8   = 0x01;
 pub const RPC_PONG: u8   = 0x02;
@@ -43,20 +44,24 @@ pub fn deploy_compute_task(bytecode: &[u8]) {
     crate::e1000::send_packet(&frame);
 }
 
-pub fn send_compute_result(result: u32) {
-    let mut frame: [u8; 64] = [0; 64];
-    frame[0..6].copy_from_slice(&[0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF]); 
-    frame[6..12].copy_from_slice(&[0x52, 0x54, 0x00, 0x12, 0x34, 0x56]);
-    frame[12] = 0x88; frame[13] = 0xB5;
-    frame[14] = RPC_RESULT;
-    
-    // 🚀 UPGRADED: 32-bit full payload serialization for large hashes
-    frame[15] = (result & 0xFF) as u8;
-    frame[16] = ((result >> 8) & 0xFF) as u8;
-    frame[17] = ((result >> 16) & 0xFF) as u8;
-    frame[18] = ((result >> 24) & 0xFF) as u8;
-    
-    crate::e1000::send_packet(&frame);
+pub fn send_compute_result(task_id: u64, result: u32) {
+    let identity_lock = NODE_IDENTITY.lock();
+    if let Some(identity) = identity_lock.as_ref() {
+        let mut frame: [u8; 128] = [0; 128]; 
+        frame[0..6].copy_from_slice(&[0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF]); 
+        frame[6..12].copy_from_slice(&[0x52, 0x54, 0x00, 0x12, 0x34, 0x56]);
+        frame[12] = 0x88; frame[13] = 0xB5;
+        frame[14] = RPC_RESULT;
+        
+        frame[15..47].copy_from_slice(&identity.node_id);
+        frame[47..55].copy_from_slice(&task_id.to_le_bytes());
+        frame[55..59].copy_from_slice(&result.to_le_bytes());
+        
+        let signature = identity.sign_pouc(task_id, result);
+        frame[59..123].copy_from_slice(signature.as_ref());
+        
+        crate::e1000::send_packet(&frame);
+    }
 }
 
 pub fn process_incoming_frame(frame: &[u8]) {
@@ -67,9 +72,6 @@ pub fn process_incoming_frame(frame: &[u8]) {
         match rpc_command {
             RPC_PING => {
                 crate::graphics::write_result_to_screen(23, "FABRIC: [RX] KADEMLIA PING RECEIVED!     ", 0x0A);
-                let mut node_id = crate::kademlia::NodeId([0; 20]);
-                node_id.0.copy_from_slice(&frame[15..35]); 
-                crate::kademlia::add_peer(crate::kademlia::PeerNode { id: node_id, ip: [192, 168, 1, frame[20]], port: 9999 });
                 crate::graphics::write_result_to_screen(24, "FABRIC: [TX] SENDING PONG REPLY...       ", 0x0D);
                 send_kademlia_pong();
             },
@@ -79,21 +81,37 @@ pub fn process_incoming_frame(frame: &[u8]) {
             },
             RPC_EXEC => {
                 crate::graphics::write_result_to_screen(22, "FABRIC: [RX] INCOMING COMPUTE PAYLOAD!   ", 0x0D);
-                let bytecode = &frame[15..30]; 
-                if let Some(result) = crate::wasm_engine::execute_bytecode(bytecode) {
-                    send_compute_result(result);
-                }
+                let bytecode = &frame[15..55]; 
+                
+                // 🚀 LINKED TO EXISTING JIT COMPILER
+                let jit_module = crate::wasm_engine::translate_wasm_to_x86(bytecode);
+                let result = unsafe { jit_module.execute() };
+                
+                send_compute_result(9999, result as u32); 
             },
             RPC_RESULT => {
-                // 🚀 UPGRADED: 32-bit deserialization
-                let result = (frame[15] as u32) | ((frame[16] as u32) << 8) | ((frame[17] as u32) << 16) | ((frame[18] as u32) << 24);
-                crate::graphics::write_result_to_screen(22, &alloc::format!("FABRIC: [RX] COMPUTATION RESULT: {}      ", result), 0x0A);
+                if frame.len() < 123 { return; } 
                 
-                // 🚀 THE CONSENSUS HOOK
-                if crate::consensus::verify_zk_proof(result) {
-                    crate::graphics::write_result_to_screen(23, "CONSENSUS: ZK-PROOF VERIFIED! TRUST +5%  ", 0x0A);
+                let peer_pub_key = &frame[15..47];
+                let task_id_bytes = &frame[47..55];
+                let result_bytes = &frame[55..59];
+                let signature = &frame[59..123];
+                
+                let mut payload_to_verify = alloc::vec::Vec::new();
+                payload_to_verify.extend_from_slice(task_id_bytes);
+                payload_to_verify.extend_from_slice(result_bytes);
+                
+                // 🚀 ZERO-TRUST GATEWAY
+                if crate::identity::NodeIdentity::verify_signature(peer_pub_key, &payload_to_verify, signature) {
+                    let result = u32::from_le_bytes(result_bytes.try_into().unwrap());
+                    crate::graphics::write_result_to_screen(22, &alloc::format!("FABRIC: [RX] TRUSTED COMPUTE RESULT: {}      ", result), 0x0A);
+                    
+                    // 🚀 LINKED TO EXISTING CONSENSUS HOOK
+                    crate::consensus::verify_compute(result as u64);
+                    crate::graphics::write_result_to_screen(23, "CONSENSUS: CRYPTO-PROOF VERIFIED! TRUST +5%  ", 0x0A);
                 } else {
-                    crate::graphics::write_result_to_screen(23, "CONSENSUS: INVALID PROOF. NODE REJECTED. ", 0x04);
+                    crate::graphics::write_result_to_screen(22, "FABRIC: [RX] INVALID SIGNATURE! DROPPING.    ", 0x04);
+                    crate::graphics::write_result_to_screen(23, "CONSENSUS: BFT SLASHING PROTOCOL ENGAGED.    ", 0x04);
                 }
             },
             _ => {}

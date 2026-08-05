@@ -1,3 +1,4 @@
+// nexus-core/src/main.rs
 #![no_std]
 #![no_main]
 #![feature(abi_x86_interrupt)]
@@ -17,6 +18,8 @@ pub mod crypto;
 pub mod disk;
 pub mod consensus;
 pub mod tokenomics;
+pub mod identity; // 🚀 ADDED IDENTITY MODULE
+pub mod fabric;   // 🚀 ADDED FABRIC MODULE
 
 pub mod interrupts;
 pub mod gdt;
@@ -40,6 +43,7 @@ fn kernel_main(boot_info: &'static BootInfo) -> ! {
     kademlia::init_dht_routing();
     consensus::init_pbft_engine();
     tokenomics::init_crypto_economy();
+    identity::init_identity(); // 🚀 INITIALIZE ZERO-TRUST ID
     graphics::write_result_to_screen(1, "BOOT 1: GDT & TSS INITIALIZED...            ", 0x0A);
 
     interrupts::init_idt();
@@ -59,7 +63,6 @@ fn kernel_main(boot_info: &'static BootInfo) -> ! {
     network::init();
     graphics::write_result_to_screen(4, "BOOT 4: E1000 NETWORK & DPI FIREWALL ONLINE.", 0x0A);
 
-    // 🚀 FAT32 Non-Fatal Check (Prevents panic if disk is raw)
     if let Some(_volume) = fat32::mount_volume() {
         graphics::write_result_to_screen(5, "BOOT 5: FAT32 VFS MOUNTED ON ATA BUS...     ", 0x0A);
     } else {
