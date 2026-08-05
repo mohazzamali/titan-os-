@@ -42,7 +42,7 @@ pub fn init_syscall_hardware() {
         ).unwrap();
 
         // Load LStar with the memory address of our Syscall Handler
-        LStar::write(VirtAddr::new(syscall_handler as u64));
+        LStar::write(VirtAddr::new(syscall_handler as *const () as u64));
 
         // Mask interrupts when entering Ring-0 via syscall to prevent race conditions
         SFMask::write(RFlags::INTERRUPT_FLAG);

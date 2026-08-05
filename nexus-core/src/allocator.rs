@@ -1,3 +1,4 @@
+#![allow(static_mut_refs)]
 // nexus-core/src/allocator.rs
 use x86_64::{
     structures::paging::{
@@ -126,6 +127,6 @@ pub fn init_kernel_heap() {
     // 🚀 We carve out 2 Megabytes of raw RAM from the OS footprint!
     static mut KERNEL_HEAP: [u8; 2 * 1024 * 1024] = [0; 2 * 1024 * 1024];
     unsafe {
-        ALLOCATOR.init(KERNEL_HEAP.as_mut_ptr() as usize, KERNEL_HEAP.len());
+        ALLOCATOR.init(core::ptr::addr_of_mut!(KERNEL_HEAP) as usize, KERNEL_HEAP.len());
     }
 }

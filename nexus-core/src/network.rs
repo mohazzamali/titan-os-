@@ -113,7 +113,7 @@ pub fn poll() {
 
                     node.iface.update_ip_addrs(|addrs| {
                         addrs.clear();
-                        addrs.push(IpCidr::Ipv4(config.address));
+                        let _ = addrs.push(IpCidr::Ipv4(config.address));
                     });
                 }
                 DhcpEvent::Deconfigured => {

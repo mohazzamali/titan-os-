@@ -5,7 +5,6 @@
 extern crate alloc;
 use core::arch::asm;
 use alloc::vec::Vec;
-use alloc::string::String;
 
 // 🚀 Core ATA PIO Hardware Reader
 unsafe fn read_sector_lba28(lba: u32, buffer: &mut [u16; 256]) -> bool {
