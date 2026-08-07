@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>NEXUS TITAN - Command Center</title>
+    <style>
+        body { background-color: #0d1117; color: #58a6ff; font-family: monospace; padding: 20px; }
+        .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+        .card { background-color: #161b22; padding: 20px; border: 1px solid #30363d; border-radius: 8px; }
+        h1, h2 { color: #c9d1d9; margin-top: 0; }
+        .log-box { height: 300px; overflow-y: auto; background: #000; padding: 10px; color: #3fb950; font-size: 14px; }
+        .node { padding: 10px; margin: 10px 0; border-left: 4px solid #8957e5; background: #21262d; color: #c9d1d9; }
+        .stat { font-size: 24px; color: #e3b341; font-weight: bold; }
+        button { background: #238636; color: white; border: none; padding: 10px 20px; cursor: pointer; font-family: monospace; font-size: 16px; border-radius: 5px; margin-top: 10px;}
+        button:hover { background: #2ea043; }
+    </style>
+</head>
+<body>
+    <h1>🌌 NEXUS TITAN // GLOBAL MESH STATUS</h1>
+    <div class="grid">
+        <div class="card">
+            <h2>🌍 Active Swarm Nodes (Kademlia DHT)</h2>
+            <div class="node" id="n1">🟢 [GENESIS] - New York, USA (IP: 198.51.100.42)</div>
+            <div class="node" id="n2">🟢 [ALPHA] - Tokyo, Japan (IP: 203.0.113.15)</div>
+            <div class="node" id="n3">🟢 [BETA] - Frankfurt, Germany (IP: 192.0.2.88)</div>
+            <div class="node" id="n4">🟢 [GAMMA] - Mumbai, India (IP: 104.28.19.4)</div>
+            <button onclick="injectPayload()">⚡ INJECT AI PAYLOAD</button>
+        </div>
+        <div class="card">
+            <h2>💰 Tokenomics Engine (PoUC)</h2>
+            <p>Total NXC Minted:</p>
+            <div class="stat" id="nxc">0.0000 NXC</div>
+            <p>Layer 4 Scheduler Status: <span style="color:#a5d6ff;">OPTIMIZED</span></p>
+        </div>
+    </div>
+    <div class="card" style="margin-top: 20px;">
+        <h2>📡 Live Terminal Telemetry</h2>
+        <div class="log-box" id="logs">
+            [SYS] COMMAND CENTER INITIALIZED.<br>
+            [NET] LISTENING FOR SWARM GOSSIP...<br>
+        </div>
+    </div>
+    <script>
+        let nxc = 0;
+        function log(msg, color="#3fb950") {
+            const l = document.getElementById('logs');
+            l.innerHTML += `<span style="color:${color}">[${new Date().toLocaleTimeString()}] ${msg}</span><br>`;
+            l.scrollTop = l.scrollHeight;
+        }
+        function injectPayload() {
+            log("USER: INJECTING SECURE AI PAYLOAD INTO MESH...", "#58a6ff");
+            setTimeout(() => log("FABRIC: [RX] PAYLOAD RECEIVED BY GENESIS NODE."), 500);
+            setTimeout(() => log("DHT: GOSSIPING TO ALPHA, BETA, GAMMA...", "#a5d6ff"), 1000);
+            setTimeout(() => log("L3: ZK-VM ENCLAVE SECURED. EXECUTING WASM JIT."), 1500);
+            setTimeout(() => log("SCHED: LIVING DAG PRUNED 1 REDUNDANT BRANCH.", "#d2a8ff"), 2000);
+            setTimeout(() => {
+                log("CONSENSUS: 3f+1 QUORUM REACHED. CRYPTO-PROOF VALID!", "#ff7b72");
+                let reward = (Math.random() * (1.2 - 0.5) + 0.5).toFixed(4);
+                nxc += parseFloat(reward);
+                document.getElementById('nxc').innerText = nxc.toFixed(4) + " NXC";
+                log(`ECON: ALGORITHMIC PAYOUT - ${reward} NXC MINTED.`, "#e3b341");
+            }, 3000);
+        }
+    </script>
+</body>
+</html>

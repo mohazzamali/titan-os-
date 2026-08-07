@@ -63,6 +63,7 @@ fn kernel_main(boot_info: &'static BootInfo) -> ! {
     wasm_engine::init_wasm_sandbox();
     identity::init_identity(); 
     kademlia::init_dht_routing();
+    kademlia::ping_genesis_node();
     interrupts::init_pics();
     
     graphics::write_result_to_screen(15, "SYS: NEXUS OS FULLY OPERATIONAL. AWAITING TASKS.", 0x0B);
