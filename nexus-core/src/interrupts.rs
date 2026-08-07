@@ -1,6 +1,6 @@
 // nexus-core/src/interrupts.rs
 #![allow(dead_code)]
-extern crate alloc; // 🚀 ADDED: Required for the new Page Fault message formatting
+extern crate alloc;
 
 use x86_64::structures::idt::{InterruptDescriptorTable, InterruptStackFrame, PageFaultErrorCode};
 use spin::Mutex;
@@ -13,8 +13,11 @@ pub const PIC_2_OFFSET: u8 = PIC_1_OFFSET + 8;
 #[repr(u8)]
 pub enum InterruptIndex {
     Timer = PIC_1_OFFSET,
-    Keyboard, // 🚀 IRQ 1: The PS/2 Keyboard Interrupt
+    Keyboard, 
     E1000Network = PIC_2_OFFSET + 3,
+    // 🚀 THE FIX: Mapping the Hard Disk Interrupts!
+    AtaPrimary = PIC_2_OFFSET + 6,
+    AtaSecondary = PIC_2_OFFSET + 7,
 }
 
 impl InterruptIndex {
@@ -26,7 +29,6 @@ lazy_static! {
     static ref IDT: InterruptDescriptorTable = {
         let mut idt = InterruptDescriptorTable::new();
         
-        // Exceptions
         idt.breakpoint.set_handler_fn(breakpoint_handler);
         unsafe {
             idt.double_fault
@@ -36,12 +38,13 @@ lazy_static! {
         idt.page_fault.set_handler_fn(page_fault_handler);
         idt.general_protection_fault.set_handler_fn(general_protection_fault_handler);
 
-        // Hardware IRQs
         idt[InterruptIndex::Timer.as_usize()].set_handler_fn(timer_interrupt_handler);
         idt[InterruptIndex::E1000Network.as_usize()].set_handler_fn(e1000_interrupt_handler);
-        
-        // 🚀 THE REAL FIX: Linking the Keyboard Handler to the CPU
         idt[InterruptIndex::Keyboard.as_usize()].set_handler_fn(keyboard_interrupt_handler);
+        
+        // 🚀 THE FIX: Attaching the handlers
+        idt[InterruptIndex::AtaPrimary.as_usize()].set_handler_fn(ata_primary_interrupt_handler);
+        idt[InterruptIndex::AtaSecondary.as_usize()].set_handler_fn(ata_secondary_interrupt_handler);
 
         idt
     };
@@ -49,30 +52,20 @@ lazy_static! {
 
 pub fn init_idt() { IDT.load(); }
 
-// --- CPU Exception Handlers ---
 extern "x86-interrupt" fn breakpoint_handler(_stack_frame: InterruptStackFrame) {}
 extern "x86-interrupt" fn double_fault_handler(_stack_frame: InterruptStackFrame, _error_code: u64) -> ! { panic!("DOUBLE FAULT"); }
 extern "x86-interrupt" fn general_protection_fault_handler(_stack_frame: InterruptStackFrame, _error_code: u64) { panic!("GP FAULT"); }
 
-// 🛡️ THE ANTI-KAMIKAZE PAGE FAULT HANDLER
 extern "x86-interrupt" fn page_fault_handler(_stack_frame: InterruptStackFrame, _error_code: PageFaultErrorCode) {
     use x86_64::registers::control::Cr2;
-    
-    // 1. Find exactly which memory address the hacker tried to access
     let fault_addr = Cr2::read();
     let msg = alloc::format!("SEC: ILLEGAL ACCESS AT {:#X} BLOCKED! TASK KILLED.", fault_addr);
-    
     let mut padded_msg = alloc::string::String::from(msg);
     while padded_msg.len() < 80 { padded_msg.push(' '); }
-    
-    // 2. Blast a Red Alert to the screen
     crate::graphics::write_result_to_screen(24, &padded_msg, 0x0C); 
-    
-    // 3. Safely park this corrupted thread instead of crashing the whole Kernel!
     loop { x86_64::instructions::hlt(); }
 }
 
-// --- Hardware IRQ Handlers ---
 extern "x86-interrupt" fn timer_interrupt_handler(_stack_frame: InterruptStackFrame) {
     crate::network::TICK_COUNTER.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
     unsafe { PICS.lock().notify_end_of_interrupt(InterruptIndex::Timer.as_u8()); }
@@ -82,9 +75,7 @@ extern "x86-interrupt" fn keyboard_interrupt_handler(_stack_frame: InterruptStac
     use x86_64::instructions::port::Port;
     let mut port = Port::new(0x60);
     let _scancode: u8 = unsafe { port.read() };
-    unsafe {
-        PICS.lock().notify_end_of_interrupt(InterruptIndex::Keyboard.as_u8());
-    }
+    unsafe { PICS.lock().notify_end_of_interrupt(InterruptIndex::Keyboard.as_u8()); }
 }
 
 extern "x86-interrupt" fn e1000_interrupt_handler(_stack_frame: InterruptStackFrame) {
@@ -92,7 +83,14 @@ extern "x86-interrupt" fn e1000_interrupt_handler(_stack_frame: InterruptStackFr
     unsafe { PICS.lock().notify_end_of_interrupt(InterruptIndex::E1000Network.as_u8()); }
 }
 
-// --- Programmable Interrupt Controller (8259 PIC) ---
+// 🚀 THE FIX: Acknowledge the hard drive so it doesn't cause a Double Fault
+extern "x86-interrupt" fn ata_primary_interrupt_handler(_stack_frame: InterruptStackFrame) {
+    unsafe { PICS.lock().notify_end_of_interrupt(InterruptIndex::AtaPrimary.as_u8()); }
+}
+extern "x86-interrupt" fn ata_secondary_interrupt_handler(_stack_frame: InterruptStackFrame) {
+    unsafe { PICS.lock().notify_end_of_interrupt(InterruptIndex::AtaSecondary.as_u8()); }
+}
+
 use pic8259::ChainedPics;
 pub static PICS: Mutex<ChainedPics> = Mutex::new(unsafe { ChainedPics::new(PIC_1_OFFSET, PIC_2_OFFSET) });
 

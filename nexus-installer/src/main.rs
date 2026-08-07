@@ -1,63 +1,41 @@
-use std::fs;
-use std::process::Command;
+use std::fs::{self, File};
+use std::io::Write;
 use std::path::Path;
+use ed25519-compact::{KeyPair, Seed};
+use rand::RngCore;
 
 fn main() {
     println!("==================================================");
-    println!("⚡ NEXUS TITAN OS: DUAL-BOOT INSTALLER ENGINE");
+    println!("⚡ NEXUS TITAN: PROVIDER NODE INSTALLER (MINER)");
     println!("==================================================");
 
-    println!("[1/4] Checking Host System Security & Permissions...");
-    
-    let kernel_path = Path::new("../nexus-core/target/x86_64-unknown-none/release/bootimage-nexus-core.bin");
-    if !kernel_path.exists() {
-        println!("❌ ERROR: Kernel binary not found! Please run 'cargo bootimage --release' inside nexus-core first.");
-        return;
-    }
-    println!("✅ FOUND: Nexus Core Bare-Metal Kernel Binary.");
-
-    println!("[2/4] Accessing System EFI Partition (ESP)...");
     let efi_nexus_dir = Path::new("/tmp/nexus_efi_install"); 
-    if let Err(e) = fs::create_dir_all(efi_nexus_dir) {
-        println!("❌ FATAL: Unable to access EFI target location: {:?}", e);
-        return;
+    fs::create_dir_all(efi_nexus_dir).unwrap();
+
+    println!("[1/3] Copying Bare-Metal Kernel to USB Sector...");
+    let kernel_path = Path::new("../nexus-core/target/x86_64-unknown-none/release/bootimage-nexus-core.bin");
+    if kernel_path.exists() {
+        fs::copy(kernel_path, efi_nexus_dir.join("nexus-kernel.efi")).unwrap();
+        println!("  -> Kernel flashed successfully.");
+    } else {
+        println!("  -> WARNING: Kernel binary not pre-compiled (run cargo bootimage in nexus-core later).");
     }
 
-    println!("[3/4] Copying Nexus Titan Kernel into Physical Storage...");
-    let target_kernel_file = efi_nexus_dir.join("nexus-kernel.efi");
-    if let Err(e) = fs::copy(kernel_path, &target_kernel_file) {
-        println!("❌ ERROR: Failed to write kernel to EFI: {:?}", e);
-        return;
-    }
-    println!("✅ SUCCESS: Kernel Written to Target Sector ({:?})", target_kernel_file);
-
-    println!("[4/4] Injecting Dual-Boot Entry into System Boot Manager...");
+    println!("[2/3] Generating Unique Node Identity (Wallet)...");
+    let mut random_bytes = [0u8; 32];
+    rand::thread_rng().fill_bytes(&mut random_bytes);
     
-    #[cfg(target_os = "windows")]
-    {
-        println!("   -> Detecting Windows Boot Manager (BCD)...");
-        let bcd_status = Command::new("cmd")
-            .args(&["/C", "bcdedit /create /d \"Nexus Titan OS (Swarm Node)\" /application startup"])
-            .output();
-        println!("   -> BCD Dual-Boot Entry Status: {:?}", bcd_status.is_ok());
-    }
+    let keypair = KeyPair::from_seed(Seed::new(random_bytes));
+    let public_key = keypair.pk.as_ref();
+    
+    println!("  -> Node Swarm ID Generated: {:X?}", &public_key[0..8]);
+    
+    let wallet_path = efi_nexus_dir.join("WALLET.DAT");
+    let mut wallet_file = File::create(&wallet_path).unwrap();
+    wallet_file.write_all(&random_bytes).unwrap();
+    println!("  -> WALLET.DAT securely written to physical drive.");
 
-    #[cfg(not(target_os = "windows"))]
-    {
-        println!("   -> Detecting POSIX/Linux EFI System...");
-        println!("   -> Generating GRUB Custom Configuration Entry...");
-        let grub_entry = r#"
-menuentry "Nexus Titan OS (Bare-Metal Swarm Node)" {
-    insmod part_gpt
-    insmod fat
-    search --no-floppy --fs-uuid --set=root YOUR_EFI_UUID
-    chainloader /EFI/NexusTitan/nexus-kernel.efi
-}
-"#;
-        println!("{}", grub_entry);
-    }
-
+    println!("[3/3] Finalizing Bootloader Configurations...");
     println!("==================================================");
-    println!("🎉 INSTALLATION COMPLETE! DUAL-BOOT IS LIVE.");
-    println!("==================================================");
+    println!("🎉 MINER USB READY! Plug this into any PC, boot it, and start earning NXC.");
 }

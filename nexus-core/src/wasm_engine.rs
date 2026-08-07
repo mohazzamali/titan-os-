@@ -19,7 +19,6 @@ pub struct WasmSandboxMemory {
 }
 
 impl WasmSandboxMemory {
-    // Allocate the initial memory payload
     pub fn new(initial_pages: usize, max_pages: usize) -> Self {
         let initial_size = initial_pages * WASM_PAGE_SIZE;
         crate::graphics::write_result_to_screen(15, &format!("SEC: ALLOCATING {} BYTES DYNAMIC RAM...  ", initial_size), 0x0B);
@@ -31,32 +30,29 @@ impl WasmSandboxMemory {
         }
     }
     
-    // 🚀 THE AI SCALING ENGINE: Implementing the memory.grow opcode
+    // 🚀 THE AI SCALING ENGINE: memory.grow implementation
     pub fn grow(&mut self, additional_pages: usize) -> i32 {
         if self.current_pages + additional_pages > self.max_pages {
             crate::graphics::write_result_to_screen(18, "SEC: MEMORY GROW FAILED - OOM PREVENTED!    ", 0x04);
-            return -1; // Wasm standard failure code for Out of Memory
+            return -1; 
         }
 
         let new_size = (self.current_pages + additional_pages) * WASM_PAGE_SIZE;
         crate::graphics::write_result_to_screen(16, &format!("JIT: MEMORY.GROW INVOKED -> {} BYTES  ", new_size), 0x0E);
         
-        // Dynamically request more physical RAM from the kernel heap!
         self.buffer.resize(new_size, 0);
-        
         let old_pages = self.current_pages;
         self.current_pages += additional_pages;
         
         old_pages as i32 
     }
     
-    // Malicious code prevention: Check bounds before any memory read
     pub fn secure_read(&self, address: usize) -> Option<u8> {
         if address < self.buffer.len() {
             Some(self.buffer[address])
         } else {
             crate::graphics::write_result_to_screen(18, "SEC: FATAL! MALICIOUS MEMORY READ BLOCKED.  ", 0x04);
-            None // Deny access
+            None 
         }
     }
 }
@@ -98,7 +94,6 @@ impl JitMemory {
     
     pub unsafe fn execute(&self) -> u64 {
         if self.code.is_empty() { return 0; }
-        // Simulate execution completion
         1 
     }
 }
@@ -111,7 +106,7 @@ pub fn translate_wasm_to_x86(wasm_bytes: &[u8]) -> JitMemory {
     jit.emit(&[0x55]);             // push rbp
     jit.emit(&[0x48, 0x89, 0xE5]); // mov rbp, rsp
     
-    // 🚀 THE SECURITY INJECTION: Bitmasking hardware registers (Sandboxing)
+    // 🚀 THE SECURITY INJECTION: Bitmasking hardware registers
     jit.emit(&[0x25, 0xFF, 0xFF, 0x00, 0x00]); 
     
     let mut opcodes_translated = 0;
@@ -139,17 +134,16 @@ pub fn translate_wasm_to_x86(wasm_bytes: &[u8]) -> JitMemory {
 }
 
 pub fn execute_ota_payload(payload: &[u8]) {
-    // 🚀 THE FIX: UNWRAP THE NEXUS FABRIC FRAME
-    // If the payload has our custom Nexus Protocol header (0x88 0xB5), strip the first 15 bytes!
+    // 🚀 UNWRAP THE NEXUS FABRIC FRAME
     let actual_wasm = if payload.len() >= 15 && payload[12] == 0x88 && payload[13] == 0xB5 {
-        crate::graphics::write_result_to_screen(12, "DPI: SECURE FRAME DETECTED. STRIPPING HEADERS... ", 0x0B);
+        crate::graphics::write_result_to_screen(12, "DPI: SECURE FRAME DETECTED. STRIPPING HEADERS...", 0x0B);
         &payload[15..]
     } else {
         payload
     };
 
     if let Some(_module) = parse_wasm_payload(actual_wasm) {
-        // 🚀 Activate the Dynamic AI Jail (1 Page init, up to 16384 pages / 1GB)
+        // Activate Dynamic AI Jail
         let _sandbox = WasmSandboxMemory::new(1, 16384); 
         
         let jit_module = translate_wasm_to_x86(actual_wasm);
@@ -159,4 +153,8 @@ pub fn execute_ota_payload(payload: &[u8]) {
         crate::fabric::send_compute_result(9999, result as u32);
         crate::consensus::verify_compute(result);
     }
+}
+
+pub fn init_wasm_sandbox() {
+    // Just a silent initialization hook for main.rs, the real work happens in execute_ota_payload
 }

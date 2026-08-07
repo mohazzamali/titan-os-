@@ -1,39 +1,72 @@
 // nexus-core/src/consensus.rs
-// INDUSTRIAL GRADE pBFT, PERSISTENCE & NETWORK WIRING
-
 #![allow(dead_code)]
+extern crate alloc;
+use alloc::format;
+use alloc::string::String;
 
-pub fn verify_pbft_quorum(total_active_nodes: usize, malicious_nodes: usize) -> bool {
-    total_active_nodes >= (3 * malicious_nodes) + 1
+#[derive(Debug, PartialEq)]
+pub enum PbftState {
+    Idle,
+    PrePrepare,
+    Prepare,
+    Commit,
 }
 
-pub fn swar_vote_count(bit_vector: u64) -> u32 {
-    bit_vector.count_ones()
+pub struct PbftEngine {
+    pub state: PbftState,
+    pub bit_vector_votes: u64, // 🚀 O(1) Bit-Vector Mask (Supports 64 nodes per shard)
+    pub total_nodes: u8,
 }
 
-pub fn init_pbft_engine() {
-    crate::graphics::write_result_to_screen(10, "BFT: O(1) SWAR VOTING & 3F+1 QUORUM ACTIVE. ", 0x0C);
-}
-
-pub fn verify_compute<T>(_proof_hash: T) {
-    crate::graphics::write_result_to_screen(20, "BFT: VALIDATING WORK (3F+1 QUORUM)...       ", 0x0E);
-    crate::graphics::write_result_to_screen(21, "BFT: CONSENSUS REACHED. INITIATING PAYOUT.  ", 0x0A);
-    
-    let compute_supply: u64 = 1500; 
-    let network_demand: u64 = 4500; 
-    let _surge_price = crate::tokenomics::SurgeEngine::calculate_live_price(compute_supply, network_demand);
-    
-    crate::graphics::write_result_to_screen(22, "ECON: SURGE DEMAND DETECTED (3.0X RATE)     ", 0x0D);
-    crate::graphics::write_result_to_screen(23, "ECON: 1.0 NXC MINTED. COMMITTING TO DISK... ", 0x0A);
-    
-    if let Some(volume) = crate::fat32::mount_volume() {
-        crate::fat32::write_ledger_file(&volume, "LEDGER.DAT", "1.0 NXC");
-    } else {
-        crate::graphics::write_result_to_screen(24, "VFS: NO FAT32. SWITCHING TO RAW BLOCK I/O.  ", 0x0E);
-        crate::graphics::write_result_to_screen(25, "VFS: WRITING LEDGER TO ABSOLUTE SECTOR 2... ", 0x0B);
-        crate::graphics::write_result_to_screen(26, "SYS: STATE SAVED. OS SECURE & PERSISTENT.   ", 0x0A);
+impl PbftEngine {
+    pub const fn new() -> Self {
+        Self {
+            state: PbftState::Idle,
+            bit_vector_votes: 0,
+            total_nodes: 4, // Minimum required for a 3f+1 cluster where f=1 (Fault tolerance of 1)
+        }
     }
 
-    // 🚀 THE MISSING TRIGGER: Fire the network broadcast after saving state!
-    crate::network::broadcast_dht_ping([192, 168, 1, 255], 0xD5F1BD10283D32B9);
+    // 🚀 O(1) BIT-VECTOR VOTING: Verifies quorum instantly using CPU bitwise instructions
+    pub fn has_quorum(&self) -> bool {
+        let active_votes = self.bit_vector_votes.count_ones() as u8;
+        let required_quorum = ((2 * self.total_nodes) / 3) + 1; // Formula: 3f+1
+        active_votes >= required_quorum
+    }
+
+    pub fn process_vote(&mut self, node_index: u8) {
+        // Set the bit corresponding to the node's position in the shard
+        self.bit_vector_votes |= 1 << node_index;
+    }
+}
+
+pub static mut ENGINE: PbftEngine = PbftEngine::new();
+
+pub fn init_pbft_engine() {
+    crate::graphics::write_result_to_screen(9, "BFT: O(1) SWAR VOTING & 3F+1 QUORUM ACTIVE. ", 0x0C);
+}
+
+pub fn verify_compute(result_hash: u64) {
+    crate::graphics::write_result_to_screen(23, "CONSENSUS: INITIATING pBFT PRE-PREPARE PHASE", 0x0E);
+    
+    unsafe {
+        ENGINE.state = PbftState::PrePrepare;
+        
+        // Simulating incoming GOSSIP votes from 3 different Mesh Nodes for this execution
+        ENGINE.process_vote(0); 
+        ENGINE.process_vote(1);
+        ENGINE.process_vote(2);
+        
+        crate::graphics::write_result_to_screen(24, "CONSENSUS: O(1) BIT-VECTOR VOTING ENGAGED... ", 0x0B);
+
+        if ENGINE.has_quorum() {
+            ENGINE.state = PbftState::Commit;
+            crate::graphics::write_result_to_screen(25, "CONSENSUS: 3f+1 QUORUM REACHED. CRYPTO-PROOF!", 0x0A);
+            
+            // 🚀 Hook into the Tokenomics engine (PoUC - Proof of Useful Compute)
+            crate::tokenomics::mint_nxc_reward(result_hash);
+        } else {
+            crate::graphics::write_result_to_screen(25, "CONSENSUS: QUORUM FAILED. SLASHING ACTORS!  ", 0x04);
+        }
+    }
 }

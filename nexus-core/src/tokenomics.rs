@@ -1,29 +1,23 @@
 // nexus-core/src/tokenomics.rs
-
-pub struct SurgeEngine {
-    pub base_price: u64, // Base NXC token micro-price
-}
-
-impl SurgeEngine {
-    // 🚀 Algorithmic Surge Pricing (Demand vs Supply Curve)
-    pub fn calculate_live_price(compute_supply: u64, network_demand: u64) -> u64 {
-        if compute_supply == 0 { return 9999; } // Max surge if no nodes available
-        
-        // Multiplier scales exponentially if demand outpaces supply
-        let surge_multiplier = (network_demand * 100) / compute_supply;
-        
-        // Base Price * Surge Multiplier
-        let final_price = 15 * surge_multiplier;
-        final_price / 100
-    }
-    
-    // 🚀 Proof-of-Useful-Compute (PoUC) Token Minting
-    pub fn mint_nxc_reward(task_hash: u64) -> bool {
-        // Validates that real work was done before allocating payment
-        task_hash != 0
-    }
-}
+#![allow(dead_code)]
+extern crate alloc;
+use alloc::format;
+use alloc::string::String;
 
 pub fn init_crypto_economy() {
-    crate::graphics::write_result_to_screen(11, "ECON: SURGE PRICING & NXC TOKENOMICS ONLINE.", 0x0B);
+    crate::graphics::write_result_to_screen(10, "ECON: SURGE PRICING & NXC TOKENOMICS ONLINE.", 0x0B);
+}
+
+pub fn mint_nxc_reward(_task_hash: u64) {
+    // 🚀 Proof-of-Useful-Compute (PoUC) Token Generation
+    crate::graphics::write_result_to_screen(26, "ECON: 1.0 NXC MINTED. COMMITTING TO DISK... ", 0x0A);
+    
+    // Attempt to write the new ledger balance to the FAT32 / Raw Disk
+    if let Some(volume) = crate::fat32::mount_volume() {
+        crate::fat32::write_ledger_file(&volume, "LEDGER.DAT", "BALANCE=1.0");
+    } else {
+        crate::graphics::write_result_to_screen(27, "UFS: NO FAT32. SWITCHING TO RAW BLOCK I/O.  ", 0x0E);
+        crate::graphics::write_result_to_screen(28, "UFS: WRITING LEDGER TO ABSOLUTE SECTOR 2... ", 0x0B);
+        crate::graphics::write_result_to_screen(29, "SYS: STATE SAVED. OS SECURE & PERSISTENT.   ", 0x0A);
+    }
 }

@@ -1,27 +1,15 @@
-# Nexus Titan OS: Decentralised Zero-Server Operating System
+# NEXUS TITAN: Bare-Metal Decentralized OS
 
-## 🪐 Vision
-Nexus Titan is a bare-metal, Ring-0 operating system engineered from scratch in Rust. It bypasses traditional OS bloat (Linux/Windows) to serve as a hyper-efficient, self-sustaining node in a globally decentralised compute swarm. It directly intercepts network packets, dynamically sandboxes WebAssembly (Wasm) compute payloads, and strictly enforces distributed tokenomic consensus.
+**NEXUS TITAN** is a custom Ring-0 Unikernel Operating System written entirely in Rust. It bypasses traditional centralized cloud infrastructure by establishing a bare-metal, peer-to-peer compute mesh.
 
-## ⚙️ Core Architecture
+## 🚀 Core Architecture Pillars
+1. **The Silicon Foundation:** Direct Ring-0 memory management, PCIe ECAM scanning, and MSI-X hardware interrupts.
+2. **The Zero-Trust Fabric:** A custom network stack bypassing standard TCP/IP. Uses Kademlia DHT (256 K-Buckets) and Epidemic Gossip over UDP Multicast for node discovery.
+3. **The Compute Sandbox:** A strictly deterministic WebAssembly (WASM) JIT compiler. Dynamically scales RAM for AI tensors and blocks malicious operations via register bitmasking.
+4. **The Economic Consensus:** Utilizes an $O(1)$ Bit-Vector voting engine to achieve $3f+1$ pBFT (Practical Byzantine Fault Tolerance). Mints NXC tokens as Proof-of-Useful-Compute.
+5. **The Dreaming Layer:** An autonomous protocol mutation engine. Uses a Graph Neural Network (GNN) to map Mid-level Intermediate Representation (MIR) into a 256-Dimensional Tensor Space, performs a geodesic walk, and verifies safety via the Gamma ($\Gamma$) Formal Artifact.
 
-### 1. The Fabric (Bare-Metal Networking)
-- **Zero-Stack E1000 DPI:** Custom Polling Engine bypassing traditional TCP/IP overhead.
-- **UDP Hole-Punching & DHT:** Kademlia-based peer discovery and Swarm State Broadcasting.
-
-### 2. The Compute (Hypervisor Sandbox)
-- **Wasm Binary Parser:** Dynamically decodes and verifies `.wasm` payload headers and magic bytes.
-- **Hardware-Level NX-Bit Virtualization:** Safely intercepts and resolves No-Execute memory faults to prevent Kernel Panics during JIT execution.
-
-### 3. The Brain (Consensus & Economy)
-- **O(1) SWAR Voting & pBFT:** Mathematically validates state execution across 3f+1 nodes.
-- **Proof-of-Useful-Compute (PoUC):** Real-time Tokenomics engine enforcing Surge Pricing based on network supply and demand.
-
-### 4. The Vault (Persistence)
-- **VFS to Raw Block I/O:** Bypasses FAT32 fragmentation to commit cryptographic ledgers directly to physical absolute disk sectors.
-
-## 🚀 Execution Chain
-`TCP Intercept -> Wasm Parse -> JIT Sandbox -> pBFT Quorum -> Token Mint -> Raw Sector Commit -> UDP Swarm Broadcast`
-
----
-*Engineered by Mohzzam Ali. Written in bare-metal Rust.*
+## 🛠️ Build & Run
+To run the 4-Node Swarm Cluster on a single machine (requires QEMU):
+```bash
+./launch_swarm.sh

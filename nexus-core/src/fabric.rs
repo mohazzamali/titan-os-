@@ -1,31 +1,54 @@
+// nexus-core/src/fabric.rs
 #![allow(dead_code)]
 extern crate alloc;
 
 use crate::identity::NODE_IDENTITY;
 
-pub const RPC_PING: u8   = 0x01;
-pub const RPC_PONG: u8   = 0x02;
-pub const RPC_EXEC: u8   = 0x03; 
-pub const RPC_RESULT: u8 = 0x04; 
+// Gossip Protocol Directives
+pub const RPC_GOSSIP_PING: u8 = 0x01;
+pub const RPC_GOSSIP_PONG: u8 = 0x02;
+pub const RPC_EXEC: u8        = 0x03; 
+pub const RPC_RESULT: u8      = 0x04; 
 
-pub fn broadcast_kademlia_ping() {
+// 🚀 EPIDEMIC GOSSIP PROTOCOL: Serverless Node Discovery (Replaces legacy PING)
+pub fn broadcast_epidemic_ping() {
     let mut frame: [u8; 64] = [0; 64];
+    
+    // Destination: Broadcast MAC (FF:FF:FF:FF:FF:FF)
     frame[0..6].copy_from_slice(&[0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF]);
+    
+    // Source: Our MAC Address
     frame[6..12].copy_from_slice(&[0x52, 0x54, 0x00, 0x12, 0x34, 0x56]);
+    
+    // EtherType: Custom Nexus Protocol (0x88B5)
     frame[12] = 0x88; frame[13] = 0xB5;
-    frame[14] = RPC_PING;
-    let my_id = [0x52, 0x54, 0x00, 0x12, 0x34, 0x56, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
-    frame[15..35].copy_from_slice(&my_id);
-    crate::graphics::write_result_to_screen(23, "FABRIC: BROADCASTING KADEMLIA PING...    ", 0x0E);
+    
+    // Command Directive
+    frame[14] = RPC_GOSSIP_PING;
+    
+    // Inject our 256-bit Ed25519 Public Key (Node ID) into the payload
+    let identity_lock = NODE_IDENTITY.lock();
+    if let Some(identity) = identity_lock.as_ref() {
+        frame[15..47].copy_from_slice(&identity.node_id);
+    }
+    
+    crate::graphics::write_result_to_screen(18, "FABRIC: BROADCASTING EPIDEMIC GOSSIP PING...", 0x0E);
     crate::e1000::send_packet(&frame);
 }
 
-pub fn send_kademlia_pong() {
+// 🚀 SELF-HEALING & PRUNING: Acknowledging Peer Discovery (Replaces legacy PONG)
+pub fn send_epidemic_pong(target_mac: &[u8]) {
     let mut frame: [u8; 64] = [0; 64];
-    frame[0..6].copy_from_slice(&[0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF]); 
+    frame[0..6].copy_from_slice(target_mac); 
     frame[6..12].copy_from_slice(&[0x52, 0x54, 0x00, 0x12, 0x34, 0x56]);
     frame[12] = 0x88; frame[13] = 0xB5;
-    frame[14] = RPC_PONG;
+    frame[14] = RPC_GOSSIP_PONG;
+
+    let identity_lock = NODE_IDENTITY.lock();
+    if let Some(identity) = identity_lock.as_ref() {
+        frame[15..47].copy_from_slice(&identity.node_id);
+    }
+
     crate::e1000::send_packet(&frame);
 }
 
@@ -64,26 +87,35 @@ pub fn send_compute_result(task_id: u64, result: u32) {
     }
 }
 
+// 🚀 THE INGRESS ROUTER: Parsing raw frames bypassing the IP stack
 pub fn process_incoming_frame(frame: &[u8]) {
     if frame.len() < 60 { return; }
+    
+    // Authenticate Nexus EtherType (0x88B5)
     if frame[12] == 0x88 && frame[13] == 0xB5 {
         let rpc_command = frame[14];
+        let sender_mac = &frame[6..12];
+        
+        // Extract the 256-bit Node ID (Ed25519 Public Key)
+        let mut _peer_id = [0u8; 32];
+        if frame.len() >= 47 {
+            _peer_id.copy_from_slice(&frame[15..47]);
+        }
         
         match rpc_command {
-            RPC_PING => {
-                crate::graphics::write_result_to_screen(23, "FABRIC: [RX] KADEMLIA PING RECEIVED!     ", 0x0A);
-                crate::graphics::write_result_to_screen(24, "FABRIC: [TX] SENDING PONG REPLY...       ", 0x0D);
-                send_kademlia_pong();
+            RPC_GOSSIP_PING => {
+                crate::graphics::write_result_to_screen(19, "FABRIC: [RX] EPIDEMIC PING RECEIVED!        ", 0x0A);
+                crate::graphics::write_result_to_screen(20, "FABRIC: [TX] SENDING GOSSIP PONG REPLY...   ", 0x0D);
+                send_epidemic_pong(sender_mac);
             },
-            RPC_PONG => {
-                crate::graphics::write_result_to_screen(23, "FABRIC: [RX] KADEMLIA PONG RECEIVED!     ", 0x0B);
-                crate::graphics::write_result_to_screen(24, "SYS: 2-WAY P2P HANDSHAKE COMPLETE.       ", 0x0A);
+            RPC_GOSSIP_PONG => {
+                crate::graphics::write_result_to_screen(19, "FABRIC: [RX] EPIDEMIC PONG RECEIVED!        ", 0x0B);
+                crate::graphics::write_result_to_screen(20, "SYS: 2-WAY P2P GOSSIP HANDSHAKE COMPLETE.   ", 0x0A);
             },
             RPC_EXEC => {
                 crate::graphics::write_result_to_screen(22, "FABRIC: [RX] INCOMING COMPUTE PAYLOAD!   ", 0x0D);
                 let bytecode = &frame[15..55]; 
                 
-                // 🚀 LINKED TO EXISTING JIT COMPILER
                 let jit_module = crate::wasm_engine::translate_wasm_to_x86(bytecode);
                 let result = unsafe { jit_module.execute() };
                 
@@ -101,12 +133,10 @@ pub fn process_incoming_frame(frame: &[u8]) {
                 payload_to_verify.extend_from_slice(task_id_bytes);
                 payload_to_verify.extend_from_slice(result_bytes);
                 
-                // 🚀 ZERO-TRUST GATEWAY
                 if crate::identity::NodeIdentity::verify_signature(peer_pub_key, &payload_to_verify, signature) {
                     let result = u32::from_le_bytes(result_bytes.try_into().unwrap());
                     crate::graphics::write_result_to_screen(22, &alloc::format!("FABRIC: [RX] TRUSTED COMPUTE RESULT: {}      ", result), 0x0A);
                     
-                    // 🚀 LINKED TO EXISTING CONSENSUS HOOK
                     crate::consensus::verify_compute(result as u64);
                     crate::graphics::write_result_to_screen(23, "CONSENSUS: CRYPTO-PROOF VERIFIED! TRUST +5%  ", 0x0A);
                 } else {

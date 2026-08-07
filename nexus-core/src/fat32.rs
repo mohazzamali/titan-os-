@@ -6,7 +6,6 @@ extern crate alloc;
 use core::arch::asm;
 use alloc::vec::Vec;
 
-// 🚀 Core ATA PIO Hardware Reader
 unsafe fn read_sector_lba28(lba: u32, buffer: &mut [u16; 256]) -> bool {
     asm!("out dx, al", in("dx") 0x1F6u16, in("al") (0xE0 | ((lba >> 24) & 0x0F) as u8));
     asm!("out dx, al", in("dx") 0x1F2u16, in("al") 1u8); 
@@ -34,7 +33,6 @@ unsafe fn read_sector_lba28(lba: u32, buffer: &mut [u16; 256]) -> bool {
     true
 }
 
-// 🚀 Hardware Structs (Memory Aligned)
 #[repr(C, packed)]
 struct PartitionEntry {
     boot_indicator: u8,
@@ -93,7 +91,6 @@ pub struct IndustrialFat32Volume {
     pub root_cluster: u32,
 }
 
-// 🚀 VFS Engine Logic
 pub fn mount_industrial_volume() -> Option<IndustrialFat32Volume> {
     crate::graphics::write_result_to_screen(20, "VFS: SCANNING MBR & PARTITION TABLE...", 0x0E);
     
@@ -122,6 +119,12 @@ pub fn mount_industrial_volume() -> Option<IndustrialFat32Volume> {
 
     let ebpb: &Fat32BootSector = unsafe { &*(&boot_sector_buf as *const _ as *const Fat32BootSector) };
 
+    // 🚀 THE FIX 1: Sanity check to detect if the drive is a fake Ghost Drive (Kernel Binary)
+    if ebpb.bytes_per_sector != 512 && ebpb.bytes_per_sector != 4096 {
+        crate::graphics::write_result_to_screen(21, "VFS: GHOST DRIVE DETECTED. BYPASSING...   ", 0x0E);
+        return None; // Fallback to raw mode safely
+    }
+
     crate::graphics::write_result_to_screen(21, "VFS: INDUSTRIAL FAT32 ENGINE MOUNTED OK.  ", 0x0A);
     
     Some(IndustrialFat32Volume {
@@ -137,19 +140,21 @@ pub fn mount_industrial_volume() -> Option<IndustrialFat32Volume> {
 
 impl IndustrialFat32Volume {
     pub fn first_sector_of_cluster(&self, cluster: u32) -> u32 {
-        let fat_start = self.volume_start_lba + self.reserved_sector_count as u32;
-        let data_start = fat_start + (self.table_count as u32 * self.table_size_32);
-        data_start + ((cluster - 2) * self.sectors_per_cluster as u32)
+        // 🚀 THE FIX 2: Wrapping math prevents Integer Overflows if data is ever corrupted
+        let fat_start = self.volume_start_lba.wrapping_add(self.reserved_sector_count as u32);
+        let data_start = fat_start.wrapping_add((self.table_count as u32).wrapping_mul(self.table_size_32));
+        data_start.wrapping_add((cluster.wrapping_sub(2)).wrapping_mul(self.sectors_per_cluster as u32))
     }
 }
 
-// 🚀 Compatibility Bridge
 pub type Fat32Volume = IndustrialFat32Volume;
 pub fn mount_volume() -> Option<Fat32Volume> { mount_industrial_volume() }
+
 pub fn write_ledger_file(volume: &Fat32Volume, _filename: &str, _data: &str) {
     crate::graphics::write_result_to_screen(24, "VFS: LOCATING FREE DISK CLUSTERS...         ", 0x0E);
     let _target_sector = volume.first_sector_of_cluster(2);
     crate::graphics::write_result_to_screen(25, "VFS: WRITING LEDGER STATE TO PHYSICAL DISK. ", 0x0B);
     crate::graphics::write_result_to_screen(26, "SYS: STATE SAVED. OS SECURE & PERSISTENT.   ", 0x0A);
 }
+
 pub fn read_file(_volume: &Fat32Volume, _filename: &str) -> Option<Vec<u8>> { None }
