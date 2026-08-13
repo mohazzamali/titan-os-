@@ -1,34 +1,32 @@
 #!/bin/bash
-echo "🌌 INITIATING NEXUS TITAN 4-NODE CLUSTER..."
+echo "======================================================="
+echo " 🌌 INITIATING NEXUS TITAN 4-NODE CLUSTER (THE SWARM)"
+echo "======================================================="
 
 killall -9 qemu-system-x86_64 2>/dev/null
-rm -f /tmp/nexus_multicast.sock
 
-echo "🛠️ Recompiling Bare-Metal OS..."
+echo "🛠️ Compiling Immortal Bare-Metal OS..."
 cd nexus-core
-cargo bootimage
+cargo build --target x86_64-unknown-uefi --release
+cp target/x86_64-unknown-uefi/release/nexus-core.efi esp/EFI/BOOT/BOOTX64.EFI
 cd ..
-
-MASTER_IMAGE="nexus-core/target/x86_64-unknown-none/debug/bootimage-nexus-core.bin"
-
-echo "💽 CLONING ISOLATED DISK IMAGES FOR SWARM NODES..."
-cp $MASTER_IMAGE /tmp/nexus_node1.bin
-cp $MASTER_IMAGE /tmp/nexus_node2.bin
-cp $MASTER_IMAGE /tmp/nexus_node3.bin
-cp $MASTER_IMAGE /tmp/nexus_node4.bin
 
 echo "🚀 IGNITING SWARM NODES..."
 
-# Node 1
-qemu-system-x86_64 -drive format=raw,file=/tmp/nexus_node1.bin -m 128M -netdev socket,id=net0,mcast=230.0.0.1:1234 -device e1000,netdev=net0,mac=52:54:00:12:34:01 -netdev user,id=net1,hostfwd=tcp::9999-:9999 -device e1000,netdev=net1 -display cocoa -name "NEXUS NODE 1 (ALPHA)" &
-sleep 2
+# NODE 1: GENESIS (Sends Gossip out to Mac)
+qemu-system-x86_64 -m 256M -drive if=pflash,format=raw,readonly=on,file=nexus-core/OVMF.fd -drive format=raw,file=fat:rw:nexus-core/esp -device e1000,netdev=n1,mac=52:54:00:12:34:01 -netdev user,id=n1,hostfwd=tcp:127.0.0.1:9999-:9999,hostfwd=udp::7001-:6969 -name "NEXUS [GENESIS NODE]" &
+sleep 1.5
 
-# Node 2
-qemu-system-x86_64 -drive format=raw,file=/tmp/nexus_node2.bin -m 128M -netdev socket,id=net0,mcast=230.0.0.1:1234 -device e1000,netdev=net0,mac=52:54:00:12:34:02 -display cocoa -name "NEXUS NODE 2 (BETA)" &
-# Node 3
-qemu-system-x86_64 -drive format=raw,file=/tmp/nexus_node3.bin -m 128M -netdev socket,id=net0,mcast=230.0.0.1:1234 -device e1000,netdev=net0,mac=52:54:00:12:34:03 -display cocoa -name "NEXUS NODE 3 (GAMMA)" &
-# Node 4
-qemu-system-x86_64 -drive format=raw,file=/tmp/nexus_node4.bin -m 128M -netdev socket,id=net0,mcast=230.0.0.1:1234 -device e1000,netdev=net0,mac=52:54:00:12:34:04 -display cocoa -name "NEXUS NODE 4 (DELTA)" &
+# NODE 2: ALPHA (Listens on Mac Port 7002)
+qemu-system-x86_64 -m 256M -drive if=pflash,format=raw,readonly=on,file=nexus-core/OVMF.fd -drive format=raw,file=fat:rw:nexus-core/esp -device e1000,netdev=n2,mac=52:54:00:12:34:02 -netdev user,id=n2,hostfwd=udp::7002-:6969 -name "NEXUS [ALPHA NODE]" &
+sleep 1.5
 
-echo "🔥 SWARM CLUSTER ONLINE. WATCH THE GOSSIP PROTOCOL."
+# NODE 3: BETA (Listens on Mac Port 7003)
+qemu-system-x86_64 -m 256M -drive if=pflash,format=raw,readonly=on,file=nexus-core/OVMF.fd -drive format=raw,file=fat:rw:nexus-core/esp -device e1000,netdev=n3,mac=52:54:00:12:34:03 -netdev user,id=n3,hostfwd=udp::7003-:6969 -name "NEXUS [BETA NODE]" &
+sleep 1.5
+
+# NODE 4: GAMMA (Listens on Mac Port 7004)
+qemu-system-x86_64 -m 256M -drive if=pflash,format=raw,readonly=on,file=nexus-core/OVMF.fd -drive format=raw,file=fat:rw:nexus-core/esp -device e1000,netdev=n4,mac=52:54:00:12:34:04 -netdev user,id=n4,hostfwd=udp::7004-:6969 -name "NEXUS [GAMMA NODE]" &
+
+echo "🔥 SWARM CLUSTER ONLINE! START THE PYTHON RELAY TO BRIDGE THEM."
 wait

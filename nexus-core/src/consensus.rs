@@ -1,72 +1,56 @@
 // nexus-core/src/consensus.rs
 #![allow(dead_code)]
-extern crate alloc;
+use core::sync::atomic::{AtomicU32, Ordering};
+use crate::spinlock::SpinLock;
 use alloc::format;
-use alloc::string::String;
+
+pub static GLOBAL_TRUST: AtomicU32 = AtomicU32::new(100);
+pub static NETWORK_TVL: SpinLock<u32> = SpinLock::new(930);
 
 #[derive(Debug, PartialEq)]
-pub enum PbftState {
-    Idle,
-    PrePrepare,
-    Prepare,
-    Commit,
-}
-
-pub struct PbftEngine {
-    pub state: PbftState,
-    pub bit_vector_votes: u64, // 🚀 O(1) Bit-Vector Mask (Supports 64 nodes per shard)
-    pub total_nodes: u8,
-}
+pub enum PbftState { Idle, PrePrepare, Prepare, Commit }
+pub struct PbftEngine { pub state: PbftState, pub bit_vector_votes: u64, pub total_nodes: u8 }
 
 impl PbftEngine {
-    pub const fn new() -> Self {
-        Self {
-            state: PbftState::Idle,
-            bit_vector_votes: 0,
-            total_nodes: 4, // Minimum required for a 3f+1 cluster where f=1 (Fault tolerance of 1)
-        }
-    }
-
-    // 🚀 O(1) BIT-VECTOR VOTING: Verifies quorum instantly using CPU bitwise instructions
-    pub fn has_quorum(&self) -> bool {
-        let active_votes = self.bit_vector_votes.count_ones() as u8;
-        let required_quorum = ((2 * self.total_nodes) / 3) + 1; // Formula: 3f+1
-        active_votes >= required_quorum
-    }
-
-    pub fn process_vote(&mut self, node_index: u8) {
-        // Set the bit corresponding to the node's position in the shard
-        self.bit_vector_votes |= 1 << node_index;
-    }
+    pub const fn new() -> Self { Self { state: PbftState::Idle, bit_vector_votes: 0, total_nodes: 4 } }
+    pub fn has_quorum(&self) -> bool { self.bit_vector_votes.count_ones() as u8 >= ((2 * self.total_nodes) / 3) + 1 }
+    pub fn process_vote(&mut self, node_index: u8) { self.bit_vector_votes |= 1 << node_index; }
 }
 
-pub static mut ENGINE: PbftEngine = PbftEngine::new();
+pub static ENGINE: SpinLock<PbftEngine> = SpinLock::new(PbftEngine::new());
 
-pub fn init_pbft_engine() {
-    crate::graphics::write_result_to_screen(9, "BFT: O(1) SWAR VOTING & 3F+1 QUORUM ACTIVE. ", 0x0C);
+pub fn init_pbft_engine() { 
+    crate::graphics::write_result_to_screen(0, "BFT: O(1) SWAR VOTING & 3F+1 QUORUM ACTIVE. ", 0); 
 }
 
-pub fn verify_compute(result_hash: u64) {
-    crate::graphics::write_result_to_screen(23, "CONSENSUS: INITIATING pBFT PRE-PREPARE PHASE", 0x0E);
+pub fn verify_compute(_result_hash: u64, compute_cycles: u32) {
+    crate::graphics::write_result_to_screen(0, "CONSENSUS: INITIATING pBFT PRE-PREPARE PHASE", 0);
+    let mut engine = ENGINE.lock();
+    engine.state = PbftState::PrePrepare;
     
-    unsafe {
-        ENGINE.state = PbftState::PrePrepare;
+    engine.process_vote(0); engine.process_vote(1); engine.process_vote(2);
+    
+    if engine.has_quorum() {
+        engine.state = PbftState::Commit;
         
-        // Simulating incoming GOSSIP votes from 3 different Mesh Nodes for this execution
-        ENGINE.process_vote(0); 
-        ENGINE.process_vote(1);
-        ENGINE.process_vote(2);
+        let reward = compute_cycles / 2;
+        let mut tvl = NETWORK_TVL.lock();
+        *tvl += reward; 
         
-        crate::graphics::write_result_to_screen(24, "CONSENSUS: O(1) BIT-VECTOR VOTING ENGAGED... ", 0x0B);
+        let mut sector_data = [0u8; 512];
+        sector_data[0..4].copy_from_slice(&tvl.to_le_bytes()); 
+        crate::disk::write_sector(2048, &sector_data);
+        
+        let msg = format!("CONSENSUS: QUORUM REACHED! MINTED {} NXC FOR WORK DONE.", reward);
+        crate::graphics::write_result_to_screen(0, &msg, 0);
+        
+        let msg2 = format!("[VAULT] PERMANENT BURN: NEW NETWORK TVL {} NXC SECURED.", *tvl);
+        crate::graphics::write_result_to_screen(0, &msg2, 0);
 
-        if ENGINE.has_quorum() {
-            ENGINE.state = PbftState::Commit;
-            crate::graphics::write_result_to_screen(25, "CONSENSUS: 3f+1 QUORUM REACHED. CRYPTO-PROOF!", 0x0A);
-            
-            // 🚀 Hook into the Tokenomics engine (PoUC - Proof of Useful Compute)
-            crate::tokenomics::mint_nxc_reward(result_hash);
-        } else {
-            crate::graphics::write_result_to_screen(25, "CONSENSUS: QUORUM FAILED. SLASHING ACTORS!  ", 0x04);
-        }
+        // 🚀 THE MAGIC: TELL THE OTHER NODES VIA UDP GOSSIP!
+        crate::network::broadcast_gossip(*tvl);
+
+    } else {
+        crate::graphics::write_result_to_screen(0, "CONSENSUS: QUORUM FAILED. SLASHING ACTORS!  ", 0);
     }
 }

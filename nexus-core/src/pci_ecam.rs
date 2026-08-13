@@ -1,7 +1,6 @@
 // nexus-core/src/pci_ecam.rs
 #![allow(dead_code)]
 extern crate alloc;
-use alloc::format;
 use alloc::vec::Vec;
 use x86_64::instructions::port::Port;
 
@@ -51,8 +50,8 @@ pub fn write_pci_register(bus: u8, slot: u8, func: u8, offset: u8, value: u32) {
 
 // 🚀 ADVANCED MSI-X CAPability PARSER & ACTIVATOR
 pub fn enable_msix_for_device(bus: u8, device: u8, function: u8) {
-    let mut capability_pointer = 0x34;
-    let mut status = read_pci_register(bus, device, function, capability_pointer);
+    let capability_pointer = 0x34;
+    let status = read_pci_register(bus, device, function, capability_pointer);
     let mut cap_offset = (status & 0xFF) as u8;
 
     while cap_offset != 0 {

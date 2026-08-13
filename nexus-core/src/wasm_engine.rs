@@ -6,16 +6,16 @@ extern crate alloc;
 use alloc::vec::Vec;
 use alloc::format;
 use alloc::string::String;
+use core::arch::asm; // Required for WBINVD
 
 const WASM_MAGIC: [u8; 4] = [0x00, 0x61, 0x73, 0x6D]; // "\0asm"
 const WASM_VERSION: [u8; 4] = [0x01, 0x00, 0x00, 0x00]; // Version 1
 pub const WASM_PAGE_SIZE: usize = 65536; // 64 KB Strict Sandbox Base
 
-// 🛡️ THE UPGRADED DYNAMIC MEMORY JAIL (For Heavy AI Tensors)
 pub struct WasmSandboxMemory {
     pub buffer: Vec<u8>,
     pub current_pages: usize,
-    pub max_pages: usize, // e.g., 16384 pages = 1 GB RAM for AI 
+    pub max_pages: usize, 
 }
 
 impl WasmSandboxMemory {
@@ -30,7 +30,6 @@ impl WasmSandboxMemory {
         }
     }
     
-    // 🚀 THE AI SCALING ENGINE: memory.grow implementation
     pub fn grow(&mut self, additional_pages: usize) -> i32 {
         if self.current_pages + additional_pages > self.max_pages {
             crate::graphics::write_result_to_screen(18, "SEC: MEMORY GROW FAILED - OOM PREVENTED!    ", 0x04);
@@ -98,7 +97,6 @@ impl JitMemory {
     }
 }
 
-// 🛡️ THE HARDWARE-LEVEL SANDBOX (WASM JIT COMPILER)
 pub fn translate_wasm_to_x86(wasm_bytes: &[u8]) -> JitMemory {
     crate::graphics::write_result_to_screen(16, "JIT: TRANSLATING WASM OPCODES TO X86_64...  ", 0x0E);
     let mut jit = JitMemory::new();
@@ -106,7 +104,6 @@ pub fn translate_wasm_to_x86(wasm_bytes: &[u8]) -> JitMemory {
     jit.emit(&[0x55]);             // push rbp
     jit.emit(&[0x48, 0x89, 0xE5]); // mov rbp, rsp
     
-    // 🚀 THE SECURITY INJECTION: Bitmasking hardware registers
     jit.emit(&[0x25, 0xFF, 0xFF, 0x00, 0x00]); 
     
     let mut opcodes_translated = 0;
@@ -134,7 +131,7 @@ pub fn translate_wasm_to_x86(wasm_bytes: &[u8]) -> JitMemory {
 }
 
 pub fn execute_ota_payload(payload: &[u8]) {
-    // 🚀 UNWRAP THE NEXUS FABRIC FRAME
+    // UNWRAP THE NEXUS FABRIC FRAME
     let actual_wasm = if payload.len() >= 15 && payload[12] == 0x88 && payload[13] == 0xB5 {
         crate::graphics::write_result_to_screen(12, "DPI: SECURE FRAME DETECTED. STRIPPING HEADERS...", 0x0B);
         &payload[15..]
@@ -143,18 +140,18 @@ pub fn execute_ota_payload(payload: &[u8]) {
     };
 
     if let Some(_module) = parse_wasm_payload(actual_wasm) {
-        // Activate Dynamic AI Jail
         let _sandbox = WasmSandboxMemory::new(1, 16384); 
         
         let jit_module = translate_wasm_to_x86(actual_wasm);
         let result = unsafe { jit_module.execute() };
         
-        // 🚀 SECURE MESH HOOK: Send the result to the network with Ed25519 Signature!
+        // 🚀 ARTICLE 8: ZEROIZATION. Flush all CPU Caches to prevent side-channel attacks
+        unsafe { asm!("wbinvd", options(nostack, nomem)); }
+        crate::graphics::write_result_to_screen(23, "SEC: [ARTICLE 8] L1/L2 CACHE FLUSHED (WBINVD).", 0x0A);
+
         crate::fabric::send_compute_result(9999, result as u32);
-        crate::consensus::verify_compute(result);
+        crate::consensus::verify_compute(result, 50); 
     }
 }
 
-pub fn init_wasm_sandbox() {
-    // Just a silent initialization hook for main.rs, the real work happens in execute_ota_payload
-}
+pub fn init_wasm_sandbox() {}

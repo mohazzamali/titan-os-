@@ -1,7 +1,5 @@
 #![allow(dead_code)]
 extern crate alloc;
-use alloc::format;
-use alloc::string::String;
 
 // 🚀 SIMULATED FHE CIPHERTEXT
 pub struct FheCiphertext {
