@@ -2,6 +2,7 @@
 import { useState, useEffect } from "react";
 
 export default function NexusHub() {
+  const [isMounted, setIsMounted] = useState(false);
   const [tvl, setTvl] = useState(931.0504);
   const [logs, setLogs] = useState([
     "[SYS] NEXUS HUB // MATCHMAKER CLOUD HYBRID ONLINE.",
@@ -12,7 +13,9 @@ export default function NexusHub() {
   const [finalResult, setFinalResult] = useState<string | null>(null);
 
   useEffect(() => {
-    // 🌐 SMART CLOUD FALLBACK: Automatically targets Render Cloud in production, Localhost in local dev
+    setIsMounted(true);
+    
+    // 🌐 Safe Cloud/Local WebSocket Routing
     const isProduction = window.location.hostname.includes("vercel.app");
     const wsUrl = isProduction 
       ? "wss://nexus-relay.onrender.com" 
@@ -33,6 +36,15 @@ export default function NexusHub() {
     };
     return () => ws.close();
   }, []);
+
+  // Prevent server-side rendering crashes by waiting for client mount
+  if (!isMounted) {
+    return (
+      <main className="min-h-screen bg-black text-cyan-400 flex items-center justify-center font-mono text-xl">
+        ⚡ INITIALIZING NEXUS MATRIX...
+      </main>
+    );
+  }
 
   const executePayload = async (payloadFile: File) => {
     setIsDeploying(true);
@@ -65,7 +77,7 @@ export default function NexusHub() {
   };
 
   return (
-    <main className="min-h-screen p-4 md:p-8 flex flex-col gap-6">
+    <main className="min-h-screen p-4 md:p-8 flex flex-col gap-6 bg-black text-white">
       <header className="border-b border-cyan-800 pb-4 flex justify-between items-end">
         <div>
           <h1 className="text-2xl md:text-3xl font-bold tracking-widest text-cyan-400">NEXUS HUB</h1>
