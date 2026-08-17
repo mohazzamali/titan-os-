@@ -4,17 +4,21 @@ import { useState, useEffect } from "react";
 export default function NexusHub() {
   const [tvl, setTvl] = useState(931.0504);
   const [logs, setLogs] = useState([
-    "[SYS] NEXUS HUB // MATCHMAKER ONLINE.",
-    "[SEC] MOBILE UI SYNCED. AWAITING PAYLOAD...",
+    "[SYS] NEXUS HUB // MATCHMAKER CLOUD HYBRID ONLINE.",
+    "[SEC] CORE NETWORK SYNCHRONIZED. AWAITING PAYLOAD...",
   ]);
   const [file, setFile] = useState<File | null>(null);
   const [isDeploying, setIsDeploying] = useState(false);
   const [finalResult, setFinalResult] = useState<string | null>(null);
 
   useEffect(() => {
-    // 🔥 THE FIX: Dynamically find the Mac's IP instead of hardcoding 'localhost'
-    const host = window.location.hostname;
-    const ws = new WebSocket("wss://YOUR_RENDER_URL.onrender.com");
+    // 🌐 SMART CLOUD FALLBACK: Automatically targets Render Cloud in production, Localhost in local dev
+    const isProduction = window.location.hostname.includes("vercel.app");
+    const wsUrl = isProduction 
+      ? "wss://nexus-relay.onrender.com" 
+      : `ws://${window.location.hostname}:8080`;
+
+    const ws = new WebSocket(wsUrl);
     
     ws.onmessage = (event) => {
       try {
@@ -34,7 +38,7 @@ export default function NexusHub() {
     setIsDeploying(true);
     setFinalResult(null);
     const time = new Date().toLocaleTimeString();
-    setLogs((prev) => [...prev, `[${time}] 📤 UPLOADING TO SWARM FROM MOBILE...`]);
+    setLogs((prev) => [...prev, `[${time}] 📤 UPLOADING TO GLOBAL SWARM...`]);
 
     const formData = new FormData();
     formData.append("file", payloadFile);
@@ -46,7 +50,7 @@ export default function NexusHub() {
         setLogs((prev) => [...prev, `[${time}] ⚡ ${data.message}`]);
       }
     } catch (err) {
-      setLogs((prev) => [...prev, `[${time}] ❌ ERROR: Backend unreachable.`]);
+      setLogs((prev) => [...prev, `[${time}] ❌ ERROR: Relay unreachable.`]);
       setIsDeploying(false);
     }
   };
