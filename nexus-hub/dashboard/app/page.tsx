@@ -14,30 +14,44 @@ export default function NexusHub() {
 
   useEffect(() => {
     setIsMounted(true);
+    let ws: WebSocket | null = null;
     
-    // 🌐 Safe Cloud/Local WebSocket Routing
-    const isProduction = window.location.hostname.includes("vercel.app");
-    const wsUrl = isProduction 
-      ? "wss://nexus-relay.onrender.com" 
-      : `ws://${window.location.hostname}:8080`;
+    try {
+      const isProduction = window.location.hostname.includes("vercel.app");
+      // 🚀 Make sure you put your real render URL here!
+      const wsUrl = isProduction 
+        ? "wss://nexus-relay.onrender.com" 
+        : `ws://${window.location.hostname}:8080`;
 
-    const ws = new WebSocket(wsUrl);
-    
-    ws.onmessage = (event) => {
-      try {
-        const data = JSON.parse(event.data);
-        if (data.type === 'COMPUTE_RESULT') {
-          const time = new Date().toLocaleTimeString();
-          setLogs((prev) => [...prev, `[${time}] 🎯 [NETWORK] FINAL RESULT SECURED: ${data.result}`]);
-          setFinalResult(data.result);
-          setIsDeploying(false);
+      ws = new WebSocket(wsUrl);
+      
+      ws.onmessage = (event) => {
+        try {
+          const data = JSON.parse(event.data);
+          if (data.type === 'COMPUTE_RESULT') {
+            const time = new Date().toLocaleTimeString();
+            setLogs((prev) => [...prev, `[${time}] 🎯 [NETWORK] FINAL RESULT SECURED: ${data.result}`]);
+            setFinalResult(data.result);
+            setIsDeploying(false);
+          }
+        } catch (err) {
+          console.error("Payload parse error", err);
         }
-      } catch (err) {}
+      };
+
+      ws.onerror = () => {
+        setLogs((prev) => [...prev, `❌ [NET] Cloud Relay connection failed.`]);
+      };
+
+    } catch (err) {
+      console.error("Failed to boot WebSocket", err);
+    }
+
+    return () => {
+      if (ws) ws.close();
     };
-    return () => ws.close();
   }, []);
 
-  // Prevent server-side rendering crashes by waiting for client mount
   if (!isMounted) {
     return (
       <main className="min-h-screen bg-black text-cyan-400 flex items-center justify-center font-mono text-xl">
@@ -70,10 +84,14 @@ export default function NexusHub() {
   const handleManualDeploy = () => { if (file) executePayload(file); };
 
   const handleAutoDeploy = () => {
-    const testWasmBytes = new Uint8Array([0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00, 0x01, 0x05, 0x01, 0x60, 0x00, 0x01, 0x7f, 0x03, 0x02, 0x01, 0x00, 0x07, 0x0b, 0x01, 0x07, 0x65, 0x78, 0x65, 0x63, 0x75, 0x74, 0x65, 0x00, 0x00, 0x0a, 0x06, 0x01, 0x04, 0x00, 0x41, 0x01, 0x0b]);
-    const blob = new Blob([testWasmBytes], { type: "application/wasm" });
-    const dummyFile = new File([blob], "mobile_task.wasm", { type: "application/wasm" });
-    executePayload(dummyFile);
+    try {
+      const testWasmBytes = new Uint8Array([0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00, 0x01, 0x05, 0x01, 0x60, 0x00, 0x01, 0x7f, 0x03, 0x02, 0x01, 0x00, 0x07, 0x0b, 0x01, 0x07, 0x65, 0x78, 0x65, 0x63, 0x75, 0x74, 0x65, 0x00, 0x00, 0x0a, 0x06, 0x01, 0x04, 0x00, 0x41, 0x01, 0x0b]);
+      const blob = new Blob([testWasmBytes], { type: "application/wasm" });
+      const dummyFile = new File([blob], "mobile_task.wasm", { type: "application/wasm" });
+      executePayload(dummyFile);
+    } catch (err) {
+      console.error("Payload execution failed", err);
+    }
   };
 
   return (
