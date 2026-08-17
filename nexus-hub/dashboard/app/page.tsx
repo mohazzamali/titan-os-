@@ -14,7 +14,7 @@ export default function NexusHub() {
   useEffect(() => {
     // 🔥 THE FIX: Dynamically find the Mac's IP instead of hardcoding 'localhost'
     const host = window.location.hostname;
-    const ws = new WebSocket(`ws://${host}:8080`);
+    const ws = new WebSocket("wss://YOUR_RENDER_URL.onrender.com");
     
     ws.onmessage = (event) => {
       try {
