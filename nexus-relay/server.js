@@ -2,7 +2,7 @@ const WebSocket = require('ws');
 const net = require('net');
 
 // --- 1. WEBSOCKET SERVER (Port 8080) for Web Hub & Tier 2 ---
-const wss = new WebSocket.Server({ port: 8080 });
+const wss = new WebSocket.Server({ port: process.env.PORT || 8080 });
 let wsClients = [];
 
 // --- 2. RAW TCP SERVER (Port 8081) for Tier 3 Bare-Metal OS ---
