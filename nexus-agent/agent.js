@@ -46,7 +46,7 @@ server.listen(4000, () => {
 
 // --- 2. GLOBAL MATCHMAKER CONNECTION (For the Network) ---
 function connectToGlobalRelay() {
-    const relayWs = new WebSocket('ws://localhost:8080');
+    const relayWs = new WebSocket('wss://nexus-relay-753k.onrender.com');
 
     // 🔥 THE BULLETPROOF SHIELD: Prevent crash if Relay is offline
     relayWs.on('error', (err) => {

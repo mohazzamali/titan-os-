@@ -19,10 +19,13 @@ export default function NexusHub() {
     try {
       const isProduction = window.location.hostname.includes("vercel.app");
       
-      // ✅ AAPKA ASLI RENDER URL YAHAN PERFECTLY SET HAI
+      // ✅ THE EXACT RENDER URL
       const wsUrl = isProduction 
         ? "wss://nexus-relay-753k.onrender.com" 
         : `ws://${window.location.hostname}:8080`;
+
+      // 🔍 YAHAN SCREEN PAR DIKHEGA KI VERCEL KAHAN JA RAHA HAI
+      setLogs((prev) => [...prev, `[SYS] 🔍 ROUTING RADAR: Target locked on -> ${wsUrl}`]);
 
       ws = new WebSocket(wsUrl);
       
@@ -41,7 +44,8 @@ export default function NexusHub() {
       };
 
       ws.onerror = () => {
-        setLogs((prev) => [...prev, `❌ [NET] Cloud Relay connection failed.`]);
+        // 🔍 AB ERROR MEIN BHI URL DIKHEGA
+        setLogs((prev) => [...prev, `❌ [NET] Connection failed at: ${wsUrl}`]);
       };
 
     } catch (err) {
