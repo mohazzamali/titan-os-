@@ -19,11 +19,10 @@ export default function NexusHub() {
     try {
       const isProduction = window.location.hostname.includes("vercel.app");
       
-      // 👇👇👇 COMMANDER, BAS IS LINE MEIN APNA RENDER URL DAALNA HAI 👇👇👇
+      // ✅ AAPKA ASLI RENDER URL YAHAN PERFECTLY SET HAI
       const wsUrl = isProduction 
-        ? "wss://nexus-hub-lake-theta.onrender.com" 
+        ? "wss://nexus-relay-753k.onrender.com" 
         : `ws://${window.location.hostname}:8080`;
-      // 👆👆👆 -------------------------------------------------------- 👆👆👆
 
       ws = new WebSocket(wsUrl);
       
