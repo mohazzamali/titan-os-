@@ -106,6 +106,8 @@ pub fn init() {
     crate::graphics::write_result_to_screen(0, "DHCP: STATIC IP FORCED! 10.0.2.15 (CLOUD READY) ", 0);
 }
 
+// In nexus-core/src/network.rs
+
 pub fn poll_network() {
     let timestamp = now();
     let mut lock = NETWORK_STACK.lock();
@@ -116,7 +118,6 @@ pub fn poll_network() {
         // --- HANDLE TCP (Browser Payload) ---
         let tcp_socket = node.sockets.get_mut::<TcpSocket>(node.tcp_handle);
         
-        // 🚀 THE RESTORED BROWSER UNFREEZE FIX: abort() clears TIME_WAIT states!
         if !tcp_socket.is_active() && !tcp_socket.is_open() {
             tcp_socket.abort(); 
             let _ = tcp_socket.listen(9999);
@@ -126,26 +127,9 @@ pub fn poll_network() {
             let mut buf = [0u8; 4096];
             if let Ok(len) = tcp_socket.recv_slice(&mut buf) {
                 if len > 0 {
-                    let mut wasm_start = 0;
-                    for i in 0..len.saturating_sub(4) {
-                        if buf[i] == 0x00 && buf[i+1] == 0x61 && buf[i+2] == 0x73 && buf[i+3] == 0x6D {
-                            wasm_start = i; break;
-                        }
-                    }
-
-                    let actual_wasm_len = len - wasm_start;
-                    if actual_wasm_len > 0 && wasm_start > 0 {
-                        let msg = alloc::format!("P2P: {} BYTES WASM INJECTED VIA TCP 9999!", actual_wasm_len);
-                        crate::graphics::write_result_to_screen(0, &msg, 0);
-                        
-                        crate::wasm_engine::execute_ota_payload(&buf[wasm_start..len]);
-                        let simulated_compute = (actual_wasm_len as u32) * 10; 
-                        crate::consensus::verify_compute(0x811C9DC5, simulated_compute);
-                    }
-
+                    // Just clear the queue for TCP to keep it alive
                     if tcp_socket.can_send() {
-                        // Proper HTTP Response
-                        let response = b"HTTP/1.1 200 OK\r\nAccess-Control-Allow-Origin: *\r\nContent-Type: text/plain\r\nContent-Length: 23\r\nConnection: close\r\n\r\nZKP_VERIFIED_AND_MINTED";
+                        let response = b"HTTP/1.1 200 OK\r\nConnection: close\r\n\r\n";
                         let _ = tcp_socket.send_slice(response);
                     }
                     tcp_socket.close(); 
@@ -155,10 +139,22 @@ pub fn poll_network() {
             tcp_socket.close();
         }
 
-        // --- HANDLE UDP GOSSIP (From Python Relay) ---
+        // 🚀 HANDLE UDP GOSSIP & WASM ATTACK (Port 6969)
         let udp_socket = node.sockets.get_mut::<UdpSocket>(node.udp_handle);
         if let Ok((data, _endpoint)) = udp_socket.recv() {
-            if data.len() >= 10 && &data[0..6] == b"GOSSIP" {
+            // 1. UDP STRESS TEST WASM CATCHER
+            if data.len() == 14 && data[0] == 0x00 && data[1] == 0x61 && data[2] == 0x73 && data[3] == 0x6D {
+                let msg = alloc::format!("P2P: {} BYTES WASM INJECTED VIA UDP 6969!", data.len());
+                crate::graphics::update_terminal_log(&msg, 13); // Purple
+                
+                // Execute the payload!
+                crate::wasm_engine::execute_ota_payload(data);
+                
+                // Mint the token!
+                crate::consensus::verify_compute(0x811C9DC5, 100);
+            }
+            // 2. Original TVL Gossip Detection
+            else if data.len() >= 10 && &data[0..6] == b"GOSSIP" {
                 let mut tvl_bytes = [0u8; 4];
                 tvl_bytes.copy_from_slice(&data[6..10]);
                 let new_tvl = u32::from_le_bytes(tvl_bytes);
@@ -166,21 +162,12 @@ pub fn poll_network() {
                 let mut current_tvl = crate::consensus::NETWORK_TVL.lock();
                 if new_tvl > *current_tvl {
                     *current_tvl = new_tvl; 
-                    
-                    let mut sector_data = [0u8; 512];
-                    sector_data[0..4].copy_from_slice(&tvl_bytes);
-                    crate::disk::write_sector(2048, &sector_data);
-                    
                     let msg = alloc::format!("[SWARM] 🌐 GOSSIP RECEIVED! VAULT SYNCED TO {} NXC.", new_tvl);
-                    crate::graphics::write_result_to_screen(0, &msg, 0);
+                    crate::graphics::update_terminal_log(&msg, 10);
                 }
             }
         }
     }
-}
-
-pub fn send_test_packet() {
-    crate::graphics::write_result_to_screen(0, "[CLI] TCP STACK IS ONLINE. AWAITING CLOUD...", 0);
 }
 
 pub fn broadcast_gossip(tvl: u32) {

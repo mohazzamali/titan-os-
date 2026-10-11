@@ -1,7 +1,13 @@
+// nexus-core/src/tokenomics.rs
 #![allow(dead_code)]
 extern crate alloc;
 use alloc::format;
 use alloc::string::String;
+use core::sync::atomic::{AtomicU32, Ordering};
+
+// 🚀 GLOBAL NETWORK STATE FOR PRICING
+pub static ACTIVE_NODES: AtomicU32 = AtomicU32::new(1); // Self
+pub static PENDING_TASKS: AtomicU32 = AtomicU32::new(0);
 
 pub struct GasMeter {
     instructions_executed: u64,
@@ -14,7 +20,7 @@ impl GasMeter {
         Self {
             instructions_executed: 0,
             memory_pages_allocated: 0,
-            base_fee_per_gas: 10,
+            base_fee_per_gas: 10, // Base rate
         }
     }
 
@@ -26,36 +32,50 @@ impl GasMeter {
         self.memory_pages_allocated += pages;
     }
 
-    pub fn calculate_payout(&self, node_trust_score: u32) -> f64 {
+    // 🚀 THE SURGE PRICING ALGORITHM (Integer Math)
+    pub fn calculate_payout(&self, node_trust_score: u32) -> u64 {
+        let active_nodes = ACTIVE_NODES.load(Ordering::Relaxed) as u64;
+        let pending_tasks = PENDING_TASKS.load(Ordering::Relaxed) as u64;
+
+        // Simplified Surge Multiplier using Integer Math
+        let mut surge_multiplier = 1;
+        if active_nodes > 0 && pending_tasks > active_nodes {
+            let load_ratio = pending_tasks / active_nodes;
+            surge_multiplier = 1 + load_ratio;
+            if surge_multiplier > 5 { surge_multiplier = 5; } 
+        }
+
         let cpu_cost = self.instructions_executed * self.base_fee_per_gas;
         let mem_cost = self.memory_pages_allocated * (self.base_fee_per_gas * 50); 
         
-        let total_micro_nxc = cpu_cost + mem_cost;
-        let trust_multiplier = 1.0 + (node_trust_score as f64 / 100000.0);
+        let raw_cost = cpu_cost + mem_cost;
+        let surged_cost = raw_cost * surge_multiplier;
+
+        // Trust Bonus: High reputation nodes earn a slight premium
+        let trust_multiplier = 1 + (node_trust_score as u64 / 100);
         
-        (total_micro_nxc as f64 / 1_000_000.0) * trust_multiplier
+        surged_cost * trust_multiplier
     }
 }
 
 pub fn init_crypto_economy() {
-    crate::graphics::write_result_to_screen(7, "ECON: PROOF-OF-USEFUL-COMPUTE (PoUC) READY.     ", 0x0A);
+    crate::graphics::update_terminal_log("[ECON] PROOF-OF-USEFUL-COMPUTE (PoUC) READY.", 10); // Green
+    crate::graphics::update_terminal_log("[ECON] SURGE PRICING MULTIPLIER ACTIVATED.", 11); // Cyan
 }
 
-pub fn execute_payout(workload_type: &str, instructions: u64, memory_pages: u64, trust_score: u32) {
+pub fn execute_payout(workload_type: &str, instructions: u64, memory_pages: u64, trust_score: u32) -> u32 {
     let mut meter = GasMeter::new();
     
     meter.consume_cpu(instructions);
     meter.consume_memory(memory_pages);
-    let payout_nxc = meter.calculate_payout(trust_score);
+    
+    let payout = meter.calculate_payout(trust_score);
+    let payout_u32 = payout as u32;
 
-    // Removed the broken crate::disk::write_to_sector call to fix compile error
+    let msg = format!("[ECON] SURGE PAYOUT: {} NXC MINTED FOR {}", payout_u32, workload_type);
+    crate::graphics::update_terminal_log(&msg, 14); // Yellow
     
-    let msg = format!("ECON: PAYOUT: {:.4} NXC MINTED FOR {} WORKLOAD", payout_nxc, workload_type);
-    let mut padded_msg = String::from(msg);
-    while padded_msg.len() < 48 { padded_msg.push(' '); }
-    
-    crate::graphics::write_result_to_screen(23, &padded_msg, 0x0E); // Yellow text
+    payout_u32
 }
 
-// Added to satisfy consensus.rs dependency
 pub fn mint_nxc_reward(_hash: u64) {}

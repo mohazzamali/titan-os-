@@ -4,4 +4,10 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-serde_json = "1.0.151"
+bootloader = { version = "0.9.23", features = ["map_physical_memory"] }
+x86_64 = "0.14.13"
+
+[profile.dev]
+panic = "abort"
+[profile.release]
+panic = "abort"

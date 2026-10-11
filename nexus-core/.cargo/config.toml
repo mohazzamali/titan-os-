@@ -1,11 +1,6 @@
 [build]
-target = "x86_64-unknown-none"
+target = "x86_64-unknown-uefi"
 
 [unstable]
 build-std = ["core", "compiler_builtins", "alloc"]
 build-std-features = ["compiler-builtins-mem"]
-
-[target.'cfg(target_os = "none")']
-# 🚀 Reverted to normal runner
-runner = "bootimage runner"
-rustflags = ["-C", "relocation-model=static"]

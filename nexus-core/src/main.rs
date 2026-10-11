@@ -41,15 +41,33 @@ impl Terminal {
         if x >= self.width || y >= self.height { return; }
         unsafe { let offset = (y * self.stride + x) * 4; core::ptr::write_volatile(self.framebuffer.add(offset), b); core::ptr::write_volatile(self.framebuffer.add(offset + 1), g); core::ptr::write_volatile(self.framebuffer.add(offset + 2), r); }
     }
+    pub fn scroll(&mut self) {
+        let line_height = 12;
+        if self.height <= line_height { return; }
+        let byte_offset = line_height * self.stride * 4;
+        let copy_size = self.size.saturating_sub(byte_offset);
+        unsafe {
+            core::ptr::copy(self.framebuffer.add(byte_offset), self.framebuffer, copy_size);
+            core::ptr::write_bytes(self.framebuffer.add(copy_size), 0, byte_offset);
+        }
+        self.cursor_y -= line_height;
+    }
     fn write_char(&mut self, c: char) {
-        if c == '\n' { self.cursor_x = 10; self.cursor_y += 12; return; }
+        if c == '\n' { 
+            self.cursor_x = 10; self.cursor_y += 12; 
+            if self.cursor_y + 12 >= self.height { self.scroll(); } return; 
+        }
         let bitmap = font8x8::BASIC_FONTS.get(c).unwrap_or(font8x8::BASIC_FONTS.get('?').unwrap());
         for y in 0..8 { for x in 0..8 { if (bitmap[y] >> x) & 1 == 1 { self.draw_pixel(self.cursor_x + x, self.cursor_y + y, 0x00, 0xFF, 0x00); } } }
-        self.cursor_x += 8; if self.cursor_x + 8 >= self.width { self.cursor_x = 10; self.cursor_y += 12; }
+        self.cursor_x += 8; 
+        if self.cursor_x + 8 >= self.width { 
+            self.cursor_x = 10; self.cursor_y += 12; 
+            if self.cursor_y + 12 >= self.height { self.scroll(); }
+        }
     }
     pub fn backspace(&mut self) { if self.cursor_x > 26 { self.cursor_x -= 8; for y in 0..8 { for x in 0..8 { self.draw_pixel(self.cursor_x + x, self.cursor_y + y, 0x00, 0x00, 0x00); } } } }
     pub fn clear_screen(&mut self) {
-        for i in (0..self.size).step_by(4) { unsafe { core::ptr::write_volatile(self.framebuffer.add(i), 0x00); core::ptr::write_volatile(self.framebuffer.add(i + 1), 0x00); core::ptr::write_volatile(self.framebuffer.add(i + 2), 0x00); } }
+        unsafe { core::ptr::write_bytes(self.framebuffer, 0, self.size); }
         self.cursor_x = 10; self.cursor_y = 10;
     }
 }
@@ -60,64 +78,16 @@ pub static TERMINAL: Mutex<Option<Terminal>> = Mutex::new(None);
 #[macro_export] macro_rules! println { () => ($crate::print!("\n")); ($($arg:tt)*) => ($crate::print!("{}\n", format_args!($($arg)*))); }
 #[doc(hidden)] pub fn _print(args: core::fmt::Arguments) { if !interrupts::DESKTOP_MODE.load(Ordering::Relaxed) { if let Some(t) = TERMINAL.lock().as_mut() { t.write_fmt(args).unwrap(); } } }
 
-pub mod mouse {
-    use core::sync::atomic::{AtomicI32, AtomicU8, AtomicBool, Ordering};
-    use x86_64::instructions::port::Port;
-    pub static MOUSE_X: AtomicI32 = AtomicI32::new(400); pub static MOUSE_Y: AtomicI32 = AtomicI32::new(300);
-    pub static MOUSE_MOVED: AtomicBool = AtomicBool::new(false);
-    static MOUSE_CYCLE: AtomicU8 = AtomicU8::new(0); static PACKET_0: AtomicU8 = AtomicU8::new(0); static PACKET_1: AtomicU8 = AtomicU8::new(0);
-
-    fn wait_write() { let mut p = Port::<u8>::new(0x64); for _ in 0..10_000 { if (unsafe{p.read()} & 2)==0 { break; } } }
-    fn wait_read() { let mut p = Port::<u8>::new(0x64); for _ in 0..10_000 { if (unsafe{p.read()} & 1)==1 { break; } } }
-
-    pub fn init() {
-        unsafe {
-            x86_64::instructions::interrupts::disable(); 
-            let mut cmd = Port::<u8>::new(0x64); let mut data = Port::<u8>::new(0x60);
-            for _ in 0..100 { if (cmd.read() & 1) == 1 { data.read(); } else { break; } }
-            wait_write(); cmd.write(0xA8); wait_write(); cmd.write(0x20); wait_read(); let mut status = data.read();
-            status |= 0b0000_0010; status &= !0b0010_0000;
-            wait_write(); cmd.write(0x60); wait_write(); data.write(status);
-            wait_write(); cmd.write(0xD4); wait_write(); data.write(0xF6); wait_read(); data.read();
-            wait_write(); cmd.write(0xD4); wait_write(); data.write(0xF4); wait_read(); data.read();
-            x86_64::instructions::interrupts::enable(); 
-        }
-    }
-
-    pub fn handle_interrupt() {
-        let byte = unsafe { Port::<u8>::new(0x60).read() }; if byte == 0xFA { return; }
-        let cycle = MOUSE_CYCLE.load(Ordering::Relaxed);
-        if cycle == 0 { if (byte & 0x08) != 0 { PACKET_0.store(byte, Ordering::Relaxed); MOUSE_CYCLE.store(1, Ordering::Relaxed); } }
-        else if cycle == 1 { PACKET_1.store(byte, Ordering::Relaxed); MOUSE_CYCLE.store(2, Ordering::Relaxed); }
-        else if cycle == 2 {
-            let mut dx = PACKET_1.load(Ordering::Relaxed) as i32; let mut dy = byte as i32;
-            let p0 = PACKET_0.load(Ordering::Relaxed);
-            if (p0 & 0x10) != 0 { dx -= 256; } if (p0 & 0x20) != 0 { dy -= 256; }
-            let mut x = MOUSE_X.load(Ordering::Relaxed) + dx; let mut y = MOUSE_Y.load(Ordering::Relaxed) - dy;
-            let w = unsafe { crate::graphics::FB_WIDTH as i32 }; let max_x = if w > 0 { w - 8 } else { 792 };
-            let h = unsafe { crate::graphics::FB_HEIGHT as i32 }; let max_y = if h > 0 { h - 8 } else { 592 };
-            if x < 0 { x = 0; } else if x > max_x { x = max_x; }
-            if y < 0 { y = 0; } else if y > max_y { y = max_y; }
-            if x != MOUSE_X.load(Ordering::Relaxed) || y != MOUSE_Y.load(Ordering::Relaxed) {
-                MOUSE_X.store(x, Ordering::Relaxed); MOUSE_Y.store(y, Ordering::Relaxed); MOUSE_MOVED.store(true, Ordering::Relaxed);
-            }
-            MOUSE_CYCLE.store(0, Ordering::Relaxed);
-        }
-    }
-}
-
 #[entry]
 fn main() -> Status {
     uefi::helpers::init().unwrap();
     let mut fb_base: *mut u8 = core::ptr::null_mut(); let mut fb_size = 0; let mut h_res = 0; let mut v_res = 0; let mut fb_stride = 0;
-    
     if let Ok(gh) = boot::get_handle_for_protocol::<GraphicsOutput>() {
         if let Ok(mut gop) = boot::open_protocol_exclusive::<GraphicsOutput>(gh) {
             fb_base = gop.frame_buffer().as_mut_ptr(); fb_size = gop.frame_buffer().size();
             let res = gop.current_mode_info().resolution(); h_res = res.0; v_res = res.1; fb_stride = gop.current_mode_info().stride(); drop(gop);
         }
     }
-    
     let payload = KernelPayload { framebuffer_base: fb_base, framebuffer_size: fb_size, horizontal_resolution: h_res, vertical_resolution: v_res, stride: fb_stride, memory_map: unsafe { boot::exit_boot_services(MemoryType::LOADER_DATA) } };
     unsafe { execute_nexus_titan_kernel(payload); }
 }
@@ -128,88 +98,38 @@ unsafe fn execute_nexus_titan_kernel(payload: KernelPayload) -> ! {
     if !payload.framebuffer_base.is_null() {
         for i in (0..payload.framebuffer_size).step_by(4) { core::ptr::write_volatile(payload.framebuffer_base.add(i), 0); core::ptr::write_volatile(payload.framebuffer_base.add(i+1), 0); core::ptr::write_volatile(payload.framebuffer_base.add(i+2), 0); }
         *TERMINAL.lock() = Some(Terminal { framebuffer: payload.framebuffer_base, width: payload.horizontal_resolution, height: payload.vertical_resolution, stride: payload.stride, size: payload.framebuffer_size, cursor_x: 10, cursor_y: 10 });
-
         let heap_ptr = core::ptr::addr_of_mut!(HEAP) as usize;
         crate::allocator::init_heap(heap_ptr, HEAP_SIZE);
         interrupts::init();
+        crate::gdt::init_gdt();
+        crate::syscall::init_syscalls();
 
         crate::println!("=====================================================");
-        crate::println!(" 🚀 NEXUS TITAN [OS v18.0 - FULL E1000 TX/RX MESH]");
+        crate::println!(" ? NEXUS TITAN [OS v20.0 - FULL MESH & ECONOMY]");
         crate::println!("=====================================================");
-        crate::println!("Type 'boot' to Awaken Network, Storage & AI Matrix.\n> ");
+        crate::println!("Press 'b' to Awaken Network, Storage & AI Matrix.");
+        crate::println!("Press 's' to Test Unikernel WASM Sandbox.\n> ");
     }
 
-    let mut last_processed_tick = 0;
-    let mut mouse_init_tick = 0;
+    let mut last_scancode = 0;
 
     loop {
-        if interrupts::DESKTOP_MODE.load(Ordering::Relaxed) {
-            let current_tick = interrupts::OS_TICK.load(Ordering::Relaxed);
-
-            if mouse::MOUSE_MOVED.swap(false, Ordering::Relaxed) {
-                let mx = mouse::MOUSE_X.load(Ordering::Relaxed) as usize;
-                let my = mouse::MOUSE_Y.load(Ordering::Relaxed) as usize;
-                graphics::update_cursor(mx, my);
-            }
-
-            if mouse_init_tick > 0 && current_tick > mouse_init_tick {
-                mouse::init();
-                graphics::write_result_to_screen(0, "[SYS] PS/2 MOUSE IRQ-12 LOADED SAFELY.", 0);
-                mouse_init_tick = 0;
-            }
-
-            if current_tick > last_processed_tick {
-                
-                // 🚀 CPU IS NOW SILENT AND EFFICIENT. 
-                // Network is handled instantly by IRQ-11 Hardware Interrupts!
-                if current_tick % 10 == 0 {
-                    crate::scheduler::tick(); 
-                }
-
-                if current_tick % 20000 == 0 { 
-                    crate::gnn::execute_dream_cycle(); 
-                }
-                
-                if current_tick % 40000 == 0 {
-                    graphics::write_result_to_screen(0, "[SYS] EXTRACTING PAYLOAD FROM VFS FAT32 SECTORS...", 0);
-                    if let Some(wasm_data) = crate::vfs::read_file("smart_contract.wasm") {
-                        if wasm_data.len() > 8 && &wasm_data[0..4] == &[0x00, 0x61, 0x73, 0x6D] {
-                            let executable_code = if wasm_data.len() == 40 { &wasm_data[37..40] } else { &wasm_data[8..] };
-                            if let Some(res) = crate::wasm::validate_and_execute(executable_code) {
-                                let msg = alloc::format!("WASM: JIT EXECUTION SUCCESS! RESULT = {}", res);
-                                graphics::write_result_to_screen(0, &msg, 0);
-                                crate::consensus::verify_compute(res as u64, 50);
-                            } else {
-                                graphics::write_result_to_screen(0, "[SYS] WASM AST PARSE FAILED. INITIATING RAW MATH...", 0);
-                                let raw_math = [crate::wasm::OP_I32_CONST, 50, crate::wasm::OP_I32_CONST, 50, crate::wasm::OP_I32_ADD, crate::wasm::OP_END];
-                                if let Some(res) = crate::wasm::validate_and_execute(&raw_math) {
-                                    let msg = alloc::format!("WASM: RAW MATH INJECTION SUCCESS! 50 + 50 = {}", res);
-                                    graphics::write_result_to_screen(0, &msg, 0);
-                                    crate::consensus::verify_compute(res as u64, 10);
-                                }
-                            }
-                        } else {
-                            graphics::write_result_to_screen(0, "WASM: EXECUTION FAILED! CORRUPTED BYTECODE.", 0);
-                        }
-                    }
-                }
-                last_processed_tick = current_tick;
-            }
-        }
-
-        if interrupts::COMMAND_READY.swap(false, Ordering::Relaxed) {
-            let cmd_str = { let mut b = interrupts::COMMAND_BUFFER.lock(); let s = String::from(b.trim()); b.clear(); s };
-            let cmd = cmd_str.as_str();
-
+        let scancode = unsafe { x86_64::instructions::port::Port::<u8>::new(0x60).read() };
+        
+        if scancode != last_scancode {
+            last_scancode = scancode;
+            
             if !interrupts::DESKTOP_MODE.load(Ordering::Relaxed) {
-                if cmd == "boot" {
+                if scancode == 0x1F { 
                     graphics::draw_desktop();
                     interrupts::DESKTOP_MODE.store(true, Ordering::Relaxed);
-                    
-                    mouse_init_tick = interrupts::OS_TICK.load(Ordering::Relaxed) + 30;
-
+                    graphics::update_terminal_log("[SYS] ALLOCATING SECURE COMPUTE ENCLAVE...", 0);
+                    crate::wasm_engine::run_sandbox_test();
+                } 
+                else if scancode == 0x30 { 
+                    graphics::draw_desktop();
+                    interrupts::DESKTOP_MODE.store(true, Ordering::Relaxed);
                     graphics::update_terminal_log("[SYS] AWAKENING REAL HARDWARE COMPONENTS...", 0);
-                    
                     crate::disk::initialize_disk();
                     let mut start_sector = [0u8; 512];
                     if crate::disk::read_sector(2048, &mut start_sector) {
@@ -218,50 +138,56 @@ unsafe fn execute_nexus_titan_kernel(payload: KernelPayload) -> ! {
                         let msg = alloc::format!("[VAULT] LEDGER LOADED FROM DISK! TVL: {} NXC", *crate::consensus::NETWORK_TVL.lock());
                         graphics::update_terminal_log(&msg, 0);
                     }
-
                     crate::vfs::init();
                     crate::e1000::init_dma_network();
                     crate::network::init();
+                    crate::tokenomics::init_crypto_economy();
+                    crate::consensus::init_pbft_engine();
                     crate::kademlia::init_dht_routing();
-
+                    crate::kademlia::ping_genesis_node();
                     graphics::update_terminal_log("[SYS] AWAITING SCHEDULER HEARTBEAT...", 1);
-                    
-                    graphics::update_terminal_log("> _", 14); 
                 }
-                else { crate::println!("Command not found: {}", cmd); crate::print!("> "); }
-            } else {
-                graphics::update_terminal_log("> _", 14); 
+            } 
+            else {
+                if scancode == 0x19 { // 'p' key pressed 
+                    graphics::update_terminal_log("[NET] [TX] BROADCASTING WASM PAYLOAD OVER-THE-AIR...", 14); 
+                    
+                    let mut packet = [0u8; 64];
+                    for i in 0..6 { packet[i] = 0xFF; } // Broadcast MAC
+                    let mac = unsafe { crate::e1000::MAC_ADDRESS };
+                    for i in 0..6 { packet[i+6] = mac[i]; } // Source MAC
+                    packet[12] = 0x77; packet[13] = 0x77; // NEXUS Custom EtherType
+                    
+                    packet[14] = b'W'; packet[15] = b'A'; packet[16] = b'S'; packet[17] = b'M';
+                    
+                    let wasm_code: [u8; 14] = [
+                        0x00, 0x61, 0x73, 0x6D, 
+                        0x01, 0x00, 0x00, 0x00, 
+                        crate::wasm_engine::OP_I32_CONST, 10,
+                        crate::wasm_engine::OP_I32_CONST, 32,
+                        crate::wasm_engine::OP_I32_ADD,
+                        crate::wasm_engine::OP_END
+                    ];
+                    
+                    for i in 0..14 { packet[18+i] = wasm_code[i]; }
 
-                if cmd == "ping" {
-                    graphics::write_result_to_screen(0, "[CLI] 📤 BROADCASTING ARP REQUEST TO GATEWAY...", 0);
-                    crate::network::send_test_packet();
-                } else if cmd.starts_with("gossip ") {
-                    let val_str = cmd[7..].trim();
-                    let mut new_tvl = 0;
-                    for c in val_str.chars() {
-                        if c >= '0' && c <= '9' { new_tvl = new_tvl * 10 + (c as u32 - '0' as u32); }
-                    }
-                    if new_tvl > 0 {
-                        *crate::consensus::NETWORK_TVL.lock() = new_tvl;
-                        let mut sector_data = [0u8; 512];
-                        let balance_bytes = new_tvl.to_le_bytes();
-                        sector_data[0..4].copy_from_slice(&balance_bytes);
-                        crate::disk::write_sector(2048, &sector_data);
-                        let msg = alloc::format!("[SWARM] 🌐 GOSSIP RECEIVED! VAULT SYNCED TO {} NXC.", new_tvl);
-                        graphics::write_result_to_screen(0, &msg, 0);
-                    } else {
-                        graphics::write_result_to_screen(0, "[CLI] ERROR: INVALID GOSSIP TVL.", 0);
-                    }
-                } else if cmd == "help" {
-                    graphics::write_result_to_screen(0, "[CLI] COMMANDS: ping, gossip <TVL>, help", 0);
-                } else if cmd != "" {
-                    let msg = alloc::format!("[CLI] UNKNOWN COMMAND: {}", cmd);
-                    graphics::write_result_to_screen(0, &msg, 0);
+                    crate::e1000::send_packet(&packet);
+                    graphics::update_terminal_log("[NET] [OK] WASM FRAME PUSHED TO TX RING & SENT.", 10); 
+                }
+                else if scancode == 0x1F { 
+                    graphics::update_terminal_log("[SYS] ALLOCATING SECURE COMPUTE ENCLAVE...", 0);
+                    crate::wasm_engine::run_sandbox_test();
                 }
             }
         }
 
-        unsafe { core::arch::asm!("hlt"); }
+        // 🚀 THE UDP STRESS TEST FIX: Only poll the actual network stack!
+        if interrupts::DESKTOP_MODE.load(Ordering::Relaxed) {
+            crate::network::poll_network(); 
+        }
+
+        // Turbo Polling Mode for Stress Testing
+        for _ in 0..50 { core::hint::spin_loop(); }
     }
 }
 

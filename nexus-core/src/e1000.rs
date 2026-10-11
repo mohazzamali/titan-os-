@@ -71,6 +71,8 @@ unsafe fn clflush(addr: usize) {
     asm!("clflush [{}]", in(reg) addr);
 }
 
+// In nexus-core/src/e1000.rs
+
 pub fn init_dma_network() {
     if let Some(device) = crate::pci::scan_buses() {
         unsafe {
@@ -94,8 +96,9 @@ pub fn init_dma_network() {
             write_reg(REG_RXDESCHEAD, 0);
             write_reg(REG_RXDESCTAIL, (NUM_RX_DESC - 1) as u32);
             
-            write_reg(REG_RCTRL, (1 << 1) | (1 << 15) | (1 << 26));
-
+          // 🚀 BARE-METAL PROMISCUOUS MODE (NO LOOPBACK)
+            // Bit 1 = EN, Bit 3 = UPE, Bit 4 = MPE, Bit 15 = BAM, Bit 26 = SECRC
+            write_reg(REG_RCTRL, (1 << 1) | (1 << 3) | (1 << 4) | (1 << 15) | (1 << 26));
             for i in 0..NUM_TX_DESC {
                 TX_RING[i].address = core::ptr::addr_of!(TX_BUFFERS[i].data) as u64;
                 TX_RING[i].status = 1; 
@@ -109,38 +112,45 @@ pub fn init_dma_network() {
 
             write_reg(REG_TCTRL, (1 << 1) | (1 << 3) | (0x0F << 4) | (0x3F << 12));
             
-            // 🚀 BARE-METAL INTERRUPTS: Wake up CPU instantly on packet receive!
-            write_reg(REG_IMS, 0x1F6DC); // Unmask & Enable RX/TX Hardware Interrupts
-            read_reg(REG_ICR);           // Clear any ghost interrupts
+            write_reg(REG_IMS, 0x1F6DC); 
+            read_reg(REG_ICR);           
 
             crate::graphics::update_terminal_log("[NET] Zero-Copy DMA Aligned (128B). False Sharing Prevented.", 2);
+            crate::graphics::update_terminal_log("[NET] PROMISCUOUS RX MODE ENABLED.", 11);
         }
     }
 }
 
-pub fn poll_packet() -> Option<Vec<u8>> {
+// In nexus-core/src/e1000.rs
+
+// In nexus-core/src/e1000.rs
+
+pub fn poll_packet() -> Option<alloc::vec::Vec<u8>> {
     unsafe {
         if E1000_BAR0 == 0 { return None; } 
         let cur = RX_CUR_INDEX.load(Ordering::Relaxed);
         let desc = &mut RX_RING[cur];
 
+        // Status Bit 0 (DD) indicates Descriptor Done (Packet Received)
         if (desc.status & 1) == 1 {
             let len = desc.length as usize;
-            let mut packet = Vec::with_capacity(len);
+            let mut packet = alloc::vec::Vec::with_capacity(len);
             packet.extend_from_slice(&RX_BUFFERS[cur].data[..len]);
             
-            // 🚀 Flush the CPU cache line to ensure pure silicon memory coherence
             clflush(core::ptr::addr_of!(RX_BUFFERS[cur]) as usize);
 
+            // Clear status and give the descriptor back to hardware
             desc.status = 0;
             write_reg(REG_RXDESCTAIL, cur as u32);
-            RX_CUR_INDEX.store((cur + 1) % NUM_RX_DESC, Ordering::Relaxed);
+            
+            let next = (cur + 1) % NUM_RX_DESC;
+            RX_CUR_INDEX.store(next, Ordering::Relaxed);
+            
             return Some(packet);
         }
     }
     None
 }
-
 pub fn send_packet(data: &[u8]) {
     unsafe {
         if E1000_BAR0 == 0 { return; }
