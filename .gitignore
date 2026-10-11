@@ -1,11 +1,9 @@
-# Rust build artifacts
-target/
-**/*/target/
-
-# OS Binaries and ISOs
-*.bin
+**/target/
+*.pcap
+.DS_Store
+*AUDIT*.txt
+*CODE*.txt
 *.iso
 *.img
-
-# OS-specific files
-.DS_Store
+node_modules/
+.next/

@@ -42,4 +42,4 @@ Nexus Titan includes a Next.js based Web3 Gateway that allows browsers to intera
 cd nexus-core
 cargo build
 cp target/x86_64-unknown-uefi/debug/nexus-core.efi esp/EFI/BOOT/BOOTX64.EFI
-qemu-system-x86_64 -drive if=pflash,format=raw,readonly=on,file=$PWD/OVMF.fd -drive format=raw,file=fat:rw:esp -netdev user,id=net0,hostfwd=udp::6969-:6969 -device e1000,netdev=net0,mac=52:54:00:12:34:56
+qemu-system-x86_64 -drive if=pflash,format=raw,readonly=on,file=$PWD/OVMF.fd -drive format=raw,file=fat:rw:esp -netdev user,id=net0,hostfwd=udp::6969-:6969 -device e1000,netdev=net0,mac=52:54:00:12:34:56b
