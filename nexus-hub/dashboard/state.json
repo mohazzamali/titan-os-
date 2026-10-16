@@ -1,0 +1,31 @@
+{
+  "clientWallet": 390400,
+  "networkTvl": 9210648,
+  "lastDeployBytes": 822,
+  "miners": {
+    "6969": {
+      "port": 6969,
+      "wallet": 54800,
+      "staked": 50000,
+      "trust": 100,
+      "slashed": false,
+      "tasksCompleted": 3
+    },
+    "6970": {
+      "port": 6970,
+      "wallet": 54800,
+      "staked": 50000,
+      "trust": 100,
+      "slashed": false,
+      "tasksCompleted": 3
+    },
+    "6971": {
+      "port": 6971,
+      "wallet": 0,
+      "staked": 25000,
+      "trust": 0,
+      "slashed": true,
+      "tasksCompleted": 0
+    }
+  }
+}

@@ -3,6 +3,7 @@ import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto';
 import dgram from 'dgram';
+import { getInitialState } from '../state/route';
 
 const CANDIDATE_PORTS = [6969, 6970, 6971];
 
@@ -43,7 +44,7 @@ function sendShardToMiner(port: number, packet: Buffer): Promise<any> {
       try { socket.close(); } catch {}
       try {
         resolve(JSON.parse(msg.toString()));
-      } catch (e) {
+      } catch {
         reject(new Error(`Invalid ACK from Miner :${port}`));
       }
     });
@@ -58,48 +59,91 @@ function sendShardToMiner(port: number, packet: Buffer): Promise<any> {
   });
 }
 
-export async function POST() {
+export async function POST(req: Request) {
   try {
-    const wasmPath = path.resolve(
+    let customParam: number | null = null;
+    let customWasmBase64: string | null = null;
+    let customFileName = 'nexus_hybrid_payload.wasm';
+
+    try {
+      const body = await req.json();
+      if (body?.customParam !== undefined && !isNaN(Number(body.customParam))) {
+        customParam = Number(body.customParam);
+      }
+      if (body?.wasmBase64 && typeof body.wasmBase64 === 'string') {
+        customWasmBase64 = body.wasmBase64;
+        customFileName = body.fileName || 'uploaded_custom.wasm';
+      }
+    } catch {}
+
+    const defaultWasmPath = path.resolve(
       process.cwd(),
       '../../nexus-hybrid-payload/target/wasm32-unknown-unknown/release/nexus_hybrid_payload.wasm'
     );
     const statePath = path.resolve(process.cwd(), 'state.json');
 
-    if (!fs.existsSync(wasmPath)) {
-      return NextResponse.json({ error: "WASM binary not found on disk!" }, { status: 404 });
+    let wasmBuffer: Buffer;
+    if (customWasmBase64) {
+      wasmBuffer = Buffer.from(customWasmBase64, 'base64');
+    } else {
+      if (!fs.existsSync(defaultWasmPath)) {
+        return NextResponse.json({ error: "Default WASM binary not found on disk!" }, { status: 404 });
+      }
+      wasmBuffer = fs.readFileSync(defaultWasmPath);
     }
 
-    // 1. Check how many REAL Miner Nodes are alive on UDP
-    const livePorts = await discoverNodes();
-    if (livePorts.length === 0) {
+    // Validate WebAssembly Magic Header (\0asm)
+    if (
+      wasmBuffer.length < 8 ||
+      wasmBuffer[0] !== 0x00 ||
+      wasmBuffer[1] !== 0x61 ||
+      wasmBuffer[2] !== 0x73 ||
+      wasmBuffer[3] !== 0x6d
+    ) {
+      return NextResponse.json({ error: "INVALID WASM BINARY: Missing \\0asm magic header!" }, { status: 400 });
+    }
+
+    if (!fs.existsSync(statePath)) {
+      fs.writeFileSync(statePath, JSON.stringify(getInitialState(), null, 2));
+    }
+    const state = JSON.parse(fs.readFileSync(statePath, 'utf8'));
+
+    const allLivePorts = await discoverNodes();
+    const eligiblePorts = allLivePorts.filter((p) => !state.miners[String(p)]?.slashed);
+
+    if (eligiblePorts.length === 0) {
       return NextResponse.json(
-        { error: "0 MINER NODES ONLINE! Run 'node tools/miner_node.js 6969' in a terminal first." },
+        { error: "0 HONEST MINER NODES ONLINE! Start an unslashed miner or reset slashed state." },
         { status: 503 }
       );
     }
 
-    const wasmBuffer = fs.readFileSync(wasmPath);
     const actualBytes = wasmBuffer.length;
-    const computeCost = actualBytes * 50;
+    const totalComputeCost = actualBytes * 50;
 
-    let state = { clientWallet: 500000, networkTvl: 9101048, lastDeployBytes: 0 };
-    if (fs.existsSync(statePath)) {
-      state = JSON.parse(fs.readFileSync(statePath, 'utf8'));
-    }
-
-    if (state.clientWallet < computeCost) {
+    if (state.clientWallet < totalComputeCost) {
       return NextResponse.json({ error: "INSUFFICIENT FUNDS IN CLIENT WALLET" }, { status: 402 });
     }
 
-    // 2. Split 1000 Shards across all LIVE UDP Miner Nodes
-    const baseSeed = crypto.randomInt(10000, 999999);
-    const dynamicParam = crypto.randomInt(10, 500);
-    const shardsPerNode = Math.floor(1000 / livePorts.length);
+    // Compile & Inspect uploaded/default WASM for O(1) Spot-Check Verification
+    const verifyModule = await WebAssembly.compile(new Uint8Array(wasmBuffer));
+    const exportedFns = WebAssembly.Module.exports(verifyModule).filter((e) => e.kind === 'function');
+    if (exportedFns.length === 0) {
+      return NextResponse.json({ error: "WASM binary contains 0 exported functions!" }, { status: 400 });
+    }
 
-    const shardPromises = livePorts.map((port, idx) => {
+    const verifyInstance = await WebAssembly.instantiate(verifyModule, { env: { abort: () => {} } });
+    const primaryFnName = exportedFns[0].name;
+    const verifyFn = verifyInstance.exports[primaryFnName] as CallableFunction;
+
+    const baseSeed = crypto.randomInt(10000, 999999);
+    const dynamicParam = customParam !== null ? customParam : crypto.randomInt(10, 500);
+    const shardsPerNode = Math.floor(1000 / eligiblePorts.length);
+
+    const shardPromises = eligiblePorts.map((port, idx) => {
+      const nodeSeed = baseSeed + idx * 1000;
       const header = Buffer.alloc(12);
-      header.writeUInt32BE(baseSeed + idx * 1000, 0);
+      header.writeUInt32BE(nodeSeed, 0);
       header.writeUInt32BE(dynamicParam, 4);
       header.writeUInt32BE(shardsPerNode, 8);
       const packet = Buffer.concat([header, wasmBuffer]);
@@ -108,25 +152,61 @@ export async function POST() {
 
     const nodeResponses = await Promise.all(shardPromises);
 
-    // 3. Verify all nodes succeeded & combine cryptographic receipts
+    const verifiedNodes: any[] = [];
+    const slashedNodes: any[] = [];
+    const rewardPerHonestNode = Math.floor(totalComputeCost / eligiblePorts.length);
+
+    for (const resp of nodeResponses) {
+      const portStr = String(resp.nodePort);
+      const lastShardSeed = resp.seed + (resp.shards - 1);
+      let expectedVal: number;
+      try {
+        expectedVal = verifyFn(lastShardSeed, resp.param) >>> 0;
+      } catch {
+        expectedVal = verifyFn() >>> 0;
+      }
+      const expectedOutput = String(expectedVal);
+      const minerReportedOutput = String(resp.results?.[0]?.output);
+
+      if (expectedOutput === minerReportedOutput) {
+        state.miners[portStr].wallet += rewardPerHonestNode;
+        state.miners[portStr].tasksCompleted += 1;
+        verifiedNodes.push({ ...resp, verified: true, reward: rewardPerHonestNode });
+      } else {
+        const slashPenalty = 25000;
+        state.miners[portStr].staked = Math.max(0, state.miners[portStr].staked - slashPenalty);
+        state.miners[portStr].trust = 0;
+        state.miners[portStr].slashed = true;
+        slashedNodes.push({
+          nodePort: resp.nodePort,
+          expected: expectedOutput,
+          reported: minerReportedOutput,
+          penalty: slashPenalty
+        });
+      }
+    }
+
+    const actualClientCost = verifiedNodes.length * rewardPerHonestNode;
+    state.clientWallet -= actualClientCost;
+    state.networkTvl += actualClientCost;
+    state.lastDeployBytes = actualBytes;
+    fs.writeFileSync(statePath, JSON.stringify(state, null, 2));
+
     const finalReceiptHash = crypto
       .createHash('sha256')
-      .update(JSON.stringify(nodeResponses))
+      .update(JSON.stringify({ fileName: customFileName, verifiedNodes, slashedNodes }))
       .digest('hex');
-
-    // 4. Deduct Client Wallet & Reward Miner Pool ONLY after real UDP verification
-    state.clientWallet -= computeCost;
-    state.networkTvl += computeCost;
-    state.lastDeployBytes = actualBytes;
-    fs.writeFileSync(statePath, JSON.stringify(state));
 
     return NextResponse.json({
       status: 'success',
+      fileName: customFileName,
+      exportedFn: primaryFnName,
       bytes: actualBytes,
-      cost: computeCost,
+      cost: actualClientCost,
+      paramUsed: dynamicParam,
       seedUsed: baseSeed,
-      liveNodesUsed: livePorts,
-      nodeResponses,
+      verifiedNodes,
+      slashedNodes,
       hashResult: finalReceiptHash
     }, { status: 200 });
 
