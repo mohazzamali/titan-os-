@@ -4,25 +4,35 @@ const { performance } = require('perf_hooks');
 
 const PORT = parseInt(process.argv[2] || '6969', 10);
 const IS_CORRUPT = process.argv.includes('--corrupt');
+const GATEWAY_HOST = process.env.GATEWAY_HOST || '127.0.0.1';
+const GATEWAY_BEACON_PORT = 6999;
+
 const server = dgram.createSocket('udp4');
 
 function getNcipPassport() {
   const cpus = os.cpus();
   const hostCores = cpus ? cpus.length : 10;
-  const cores = PORT === 6969 ? 32 : PORT === 6970 ? hostCores : 8;
+  const cores = PORT === 6969 ? 32 : PORT === 6970 ? hostCores : PORT === 6971 ? 8 : 16;
   const thermal = PORT === 6969 ? 65 : PORT === 6970 ? 42 : 35;
   const battery = PORT === 6969 ? 100 : PORT === 6970 ? 83 : 76;
   const slaTrust = PORT === 6969 ? 99.9 : PORT === 6970 ? 98.5 : 95.0;
 
   return {
     port: PORT,
-    did: `did:nexus:node:${PORT}f9a2b4c6e`,
+    did: `did:nexus:node:${PORT}f9a2b4`,
     cores,
     thermal,
     battery,
     slaTrust,
     corruptMode: IS_CORRUPT
   };
+}
+
+// Problem #4 Fix: Outbound UDP NAT Hole-Punching Beacon (Miner -> Gateway)
+function sendOutboundNatHolePunch() {
+  const passport = getNcipPassport();
+  const beacon = Buffer.from(`REGISTER_NCIP:${JSON.stringify(passport)}`);
+  server.send(beacon, GATEWAY_BEACON_PORT, GATEWAY_HOST, () => {});
 }
 
 const ringSab = new SharedArrayBuffer(1024);
@@ -38,7 +48,6 @@ server.on('message', async (msg, rinfo) => {
   try {
     let seed, param, rangeStart, rangeEnd, pruneFlag, wasmBytes;
 
-    // Auto-detect exact 88-byte v3.0 header OR 84-byte v0.1 header by checking \0asm magic bytes
     if (msg.length >= 88 && msg[88] === 0x00 && msg[89] === 0x61 && msg[90] === 0x73 && msg[91] === 0x6d) {
       const payloadLen = msg.readUInt16BE(6);
       pruneFlag = msg.readUInt8(5) & 0x01;
@@ -47,14 +56,6 @@ server.on('message', async (msg, rinfo) => {
       rangeStart = msg.readUInt32BE(80);
       rangeEnd = msg.readUInt32BE(84);
       wasmBytes = msg.subarray(88, 88 + payloadLen);
-    } else if (msg.length >= 84 && msg[84] === 0x00 && msg[85] === 0x61 && msg[86] === 0x73 && msg[87] === 0x6d) {
-      const payloadLen = msg.readUInt16BE(6);
-      pruneFlag = 0;
-      seed = msg.readUInt32BE(72);
-      param = msg.readUInt32BE(76);
-      rangeStart = 0;
-      rangeEnd = msg.readUInt32BE(80);
-      wasmBytes = msg.subarray(84, 84 + payloadLen);
     } else {
       throw new Error(`Unaligned WASM frame (len=${msg.length})`);
     }
@@ -75,11 +76,20 @@ server.on('message', async (msg, rinfo) => {
 
     const wasmModule = await WebAssembly.compile(new Uint8Array(wasmBytes));
     const instance = await WebAssembly.instantiate(wasmModule, { env: { abort: () => {} } });
-    const fn = instance.exports.execute_task;
+
+    // Problem #2 Fix: Auto-discover ANY exported function inside the .wasm binary!
+    const exportedFns = WebAssembly.Module.exports(wasmModule).filter(e => e.kind === 'function');
+    if (exportedFns.length === 0) throw new Error('No exported function in WASM');
+    const targetFnName = exportedFns[0].name;
+    const fn = instance.exports[targetFnName];
 
     let lastOut = 0;
     for (let s = 0; s < effectiveShards; s++) {
-      lastOut = fn(seed + s, param) >>> 0;
+      try {
+        lastOut = fn(seed + s, param) >>> 0;
+      } catch {
+        lastOut = fn() >>> 0;
+      }
       Atomics.store(ringView, (s % 128) + 2, lastOut);
     }
 
@@ -87,12 +97,11 @@ server.on('message', async (msg, rinfo) => {
       lastOut = (lastOut ^ 0xDEAD1337) >>> 0;
       console.log(`💀 [BFT DRIFT :${PORT}] Injected malicious drift => ${lastOut}`);
     } else {
-      console.log(`✅ [VALID :${PORT}] Computed execute_task() => ${lastOut} (${effectiveShards} shards)`);
+      console.log(`✅ [VALID :${PORT}] Computed ${targetFnName}() => ${lastOut} (${effectiveShards} shards)`);
     }
 
     const computeTimeUs = Math.round((performance.now() - startTime) * 1000);
 
-    // 24-Byte Zero-Copy Binary ACK ("NACK")
     const ackBuf = Buffer.alloc(24);
     ackBuf.write('NACK', 0, 4, 'ascii');
     ackBuf.writeUInt32BE(PORT >>> 0, 4);
@@ -107,8 +116,11 @@ server.on('message', async (msg, rinfo) => {
   }
 });
 
-server.bind(PORT, '127.0.0.1', () => {
+server.bind(PORT, '0.0.0.0', () => {
   console.log(`========================================================`);
-  console.log(`🟢 NEXUS v3.0 ZERO-COPY NODE ON UDP 127.0.0.1:${PORT} ${IS_CORRUPT ? '[⚠️ ROGUE DRIFT]' : '[🛡️ LMAX + NCIP]'}`);
+  console.log(`🟢 NEXUS v4.0 NAT-PUNCH NODE ON UDP :${PORT} ${IS_CORRUPT ? '[⚠️ ROGUE DRIFT]' : '[🛡️ DEFLATIONARY + NCIP]'}`);
+  console.log(`📡 Outbound NAT Hole-Punching active -> ${GATEWAY_HOST}:${GATEWAY_BEACON_PORT}`);
   console.log(`========================================================`);
+  sendOutboundNatHolePunch();
+  setInterval(sendOutboundNatHolePunch, 2500);
 });
