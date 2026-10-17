@@ -2,10 +2,11 @@ import { NextResponse } from 'next/server';
 import fs from 'fs';
 import path from 'path';
 import dgram from 'dgram';
+import crypto from 'crypto';
 
 const DEFAULT_PORTS = [6969, 6970, 6971];
+const LEDGER_SECRET = 'NEXUS_TITAN_RING0_MERKLE_SEAL_KEY_v7';
 
-// Problem #4 Fix: Global UDP NAT Hole-Punch Listener saving actual remote IP (rinfo.address)
 const globalAny = globalThis as any;
 if (!globalAny.__nexusNatNodes) {
   globalAny.__nexusNatNodes = {} as Record<number, any>;
@@ -33,37 +34,63 @@ export interface MinerRecord {
   port: number;
   host: string;
   did: string;
+  pubKeyHex?: string;
   executionPath?: string;
   wallet: number;
   staked: number;
   trust: number;
   slashed: boolean;
   tasksCompleted: number;
+  rescuesCompleted?: number;
+  ed25519VerifiedCount?: number;
+  gopsThroughput?: number;
   cores?: number;
   thermal?: number;
   battery?: number;
   computedUtility?: number;
 }
 
+export function computeStateMerkleSeal(stateObj: any): string {
+  const canonicalPayload = JSON.stringify({
+    h: stateObj.blockHeight,
+    prev: stateObj.prevBlockHash,
+    cw: stateObj.clientWallet,
+    burn: stateObj.totalBurned,
+    miners: Object.keys(stateObj.miners || {}).sort().map(k => ({
+      p: k,
+      w: stateObj.miners[k].wallet,
+      s: stateObj.miners[k].staked,
+      sl: stateObj.miners[k].slashed
+    }))
+  });
+  return crypto.createHmac('sha256', LEDGER_SECRET).update(canonicalPayload).digest('hex');
+}
+
 export function getInitialState() {
-  return {
-    // USD-Pegged Compute + Fractional Deflationary NXC (Burn-and-Mint Equilibrium)
-    clientWallet: 100.0,           // 100.0000 High-Value NXC
-    genesisSupply: 21000000,       // 21,000,000 Fixed Cap (Bitcoin Standard)
+  const base: any = {
+    blockHeight: 1,
+    prevBlockHash: "0000000000000000000000000000000000000000000000000000000000000000",
+    merkleStateSeal: "",
+    tamperAlert: false,
+    clientWallet: 100.0,
+    genesisSupply: 21000000,
     circulatingSupply: 21000000.0,
     totalBurned: 0.0,
-    nxcUsdPrice: 2.50,             // Starts at $2.50 USD; rises as supply burns
-    fairTaskUsdCost: 0.08,         // Fixed $0.08 USD per 5,000-shard DAG (vs $0.45 on AWS = 82% cheaper!)
+    nxcUsdPrice: 2.50,
+    fairTaskUsdCost: 0.08,
     awsEquivalentUsdCost: 0.45,
     totalUsdSavedVsAws: 0.0,
+    totalSwarmGops: 0.0,
     networkTvl: 50000.0,
     lastSchedulerAudit: null as any,
     miners: {
-      "6969": { port: 6969, host: "127.0.0.1", did: "did:nexus:node:6969", executionPath: "PATH-A (VirtIO/E1000 Ring-0)", wallet: 0, staked: 1000, trust: 100, slashed: false, tasksCompleted: 0 },
-      "6970": { port: 6970, host: "127.0.0.1", did: "did:nexus:node:6970", executionPath: "PATH-B (OS MicroVM + Host Wi-Fi/NVMe)", wallet: 0, staked: 1000, trust: 100, slashed: false, tasksCompleted: 0 },
-      "6971": { port: 6971, host: "127.0.0.1", did: "did:nexus:node:6971", executionPath: "PATH-B (OS MicroVM + Host Wi-Fi/NVMe)", wallet: 0, staked: 1000, trust: 100, slashed: false, tasksCompleted: 0 }
+      "6969": { port: 6969, host: "127.0.0.1", did: "did:nexus:ed25519:0xNX_6969", executionPath: "PATH-A (Ring-0 Unikernel + SIMD Tensor)", wallet: 0, staked: 1000, trust: 100, slashed: false, tasksCompleted: 0, rescuesCompleted: 0, ed25519VerifiedCount: 0, gopsThroughput: 0 },
+      "6970": { port: 6970, host: "127.0.0.1", did: "did:nexus:ed25519:0xNX_6970", executionPath: "PATH-B (OS MicroVM + WebGPU/SIMD)", wallet: 0, staked: 1000, trust: 100, slashed: false, tasksCompleted: 0, rescuesCompleted: 0, ed25519VerifiedCount: 0, gopsThroughput: 0 },
+      "6971": { port: 6971, host: "127.0.0.1", did: "did:nexus:ed25519:0xNX_6971", executionPath: "PATH-B (OS MicroVM + WebGPU/SIMD)", wallet: 0, staked: 1000, trust: 100, slashed: false, tasksCompleted: 0, rescuesCompleted: 0, ed25519VerifiedCount: 0, gopsThroughput: 0 }
     } as Record<string, MinerRecord>
   };
+  base.merkleStateSeal = computeStateMerkleSeal(base);
+  return base;
 }
 
 export function probeLiveNodesWithNcip(): Promise<Record<number, any>> {
@@ -136,11 +163,14 @@ export async function GET() {
   }
 
   const raw = JSON.parse(fs.readFileSync(statePath, 'utf8'));
-  if (raw.fairTaskUsdCost === undefined) {
+  if (raw.totalSwarmGops === undefined) {
     const fresh = getInitialState();
     fs.writeFileSync(statePath, JSON.stringify(fresh, null, 2));
     return NextResponse.json({ ...fresh, activeNodes: 0, livePorts: [] });
   }
+
+  const expectedSeal = computeStateMerkleSeal(raw);
+  const tamperDetected = raw.merkleStateSeal !== expectedSeal;
 
   const discoveredMap = await probeLiveNodesWithNcip();
   const livePorts = Object.keys(discoveredMap).map(Number).sort();
@@ -153,16 +183,21 @@ export async function GET() {
         port,
         host: ncip.host || '127.0.0.1',
         did: ncip.did || `did:nexus:node:${port}`,
+        pubKeyHex: ncip.pubKeyHex,
         executionPath: ncip.executionPath || 'PATH-B (OS MicroVM)',
         wallet: 0,
         staked: 1000,
         trust: 100,
         slashed: false,
-        tasksCompleted: 0
+        tasksCompleted: 0,
+        rescuesCompleted: 0,
+        ed25519VerifiedCount: 0,
+        gopsThroughput: 0
       };
     }
     raw.miners[pStr].host = ncip.host || raw.miners[pStr].host || '127.0.0.1';
     raw.miners[pStr].did = ncip.did || raw.miners[pStr].did;
+    raw.miners[pStr].pubKeyHex = ncip.pubKeyHex || raw.miners[pStr].pubKeyHex;
     raw.miners[pStr].executionPath = ncip.executionPath || raw.miners[pStr].executionPath;
     raw.miners[pStr].cores = ncip.cores ?? 10;
     raw.miners[pStr].thermal = ncip.thermal ?? 42;
@@ -173,9 +208,28 @@ export async function GET() {
 
   return NextResponse.json({
     ...raw,
+    tamperAlert: tamperDetected,
     activeNodes: eligiblePorts.length,
     livePorts
   });
+}
+
+// FIX #3: Global WAN HTTP Registration Endpoint (Allows internet miners to register over HTTPS)
+export async function POST(req: Request) {
+  try {
+    const passport = await req.json();
+    if (passport?.port) {
+      globalAny.__nexusNatNodes[passport.port] = {
+        ...passport,
+        host: passport.host || '127.0.0.1',
+        lastSeen: Date.now()
+      };
+      return NextResponse.json({ status: 'registered_wan_node', port: passport.port });
+    }
+    return NextResponse.json({ error: 'Invalid NCIP passport' }, { status: 400 });
+  } catch (e: any) {
+    return NextResponse.json({ error: e.message }, { status: 500 });
+  }
 }
 
 export async function DELETE() {
