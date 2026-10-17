@@ -5,7 +5,7 @@
   "activePin": "4582",
   "pinHash": "486ea85278bd246c",
   "lastSchedulerAudit": {
-    "decision_id": "dec_70721DD15F55",
+    "decision_id": "dec_2F2465D75A83",
     "formula": "Score = ((Cores * Trust) / (Thermal + 1)) * (1000 / Complexity)",
     "autonomous_branch_pruning": true,
     "zero_copy_serialization": true,
