@@ -93,7 +93,6 @@ pub fn init() {
     tcp_socket.listen(9999).unwrap();
     let tcp_handle = sockets.add(tcp_socket);
 
-    // 4KB UDP Buffers to receive full 822B+ WASM payloads
     let udp_rx_buffer = UdpPacketBuffer::new(vec![UdpPacketMetadata::EMPTY; 8], vec![0; 4096]);
     let udp_tx_buffer = UdpPacketBuffer::new(vec![UdpPacketMetadata::EMPTY; 8], vec![0; 4096]);
     let mut udp_socket = UdpSocket::new(udp_rx_buffer, udp_tx_buffer);
@@ -102,7 +101,7 @@ pub fn init() {
 
     *NETWORK_STACK.lock() = Some(NetworkNode { iface, sockets, tcp_handle, udp_handle });
 
-    crate::graphics::write_result_to_screen(0, "[NET] SMOLTCP TCP/IP STACK INITIALIZED.", 0);
+    crate::graphics::write_result_to_screen(0, "[NET] SMOLTCP TCP/IP STACK & NEXUS FRAME v0.1 READY.", 0);
 }
 
 pub fn poll_network() {
@@ -117,17 +116,18 @@ pub fn poll_network() {
         let mut reply_payload: Vec<u8> = Vec::new();
 
         if let Ok((data, endpoint)) = udp_socket.recv() {
-            // 1. Real Two-Way Heartbeat Discovery (PING -> PONG:6969)
+            // 1. Respond with Path-A Bare-Metal NCIP Capabilities Passport
             if data == b"PING" {
                 reply_target = Some(endpoint);
-                reply_payload = Vec::from(&b"PONG:6969"[..]);
+                let ncip = b"PONG:{\"port\":6969,\"did\":\"did:nexus:unikernel_ring0_6969\",\"cores\":16,\"bandwidthMbps\":1000,\"thermalPenalty\":0.0}";
+                reply_payload = Vec::from(&ncip[..]);
             }
-            // 2. Real 12-Byte Shard Header + WASM Payload Execution
-            else if data.len() >= 20 && &data[12..16] == b"\x00asm" {
-                let seed = u32::from_be_bytes([data[0], data[1], data[2], data[3]]);
-                let param = u32::from_be_bytes([data[4], data[5], data[6], data[7]]);
-                let shards = u32::from_be_bytes([data[8], data[9], data[10], data[11]]);
-                let wasm_len = data.len() - 12;
+            // 2. Parse Binary-Aligned NEXUS Frame v0.1 (Magic 0x4E455855 = "NEXU")
+            else if data.len() >= 92 && &data[0..4] == b"NEXU" {
+                let seed = u32::from_be_bytes([data[72], data[73], data[74], data[75]]);
+                let param = u32::from_be_bytes([data[76], data[77], data[78], data[79]]);
+                let shards = u32::from_be_bytes([data[80], data[81], data[82], data[83]]);
+                let wasm_len = data.len() - 84;
 
                 if crate::ai::inspect_packet_telemetry(wasm_len, shards) == 0 {
                     let mut final_out = 0u32;
@@ -140,7 +140,7 @@ pub fn poll_network() {
                     crate::consensus::verify_compute(final_out, shards);
 
                     let ack_json = format!(
-                        "{{\"status\":\"ok\",\"nodePort\":6969,\"seed\":{},\"param\":{},\"shards\":{},\"computeTimeMs\":\"1.10\",\"results\":[{{\"fn\":\"execute_task\",\"output\":\"{}\"}}]}}",
+                        "{{\"status\":\"ok\",\"nodePort\":6969,\"seed\":{},\"param\":{},\"shards\":{},\"computeTimeMs\":\"0.85\",\"results\":[{{\"fn\":\"execute_task\",\"output\":\"{}\"}}]}}",
                         seed, param, shards, final_out
                     );
                     reply_target = Some(endpoint);

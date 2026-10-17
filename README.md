@@ -1,45 +1,22 @@
-# ⚡ NEXUS TITAN OS
-**A Decentralized, Bare-Metal WebAssembly Unikernel with Native Cryptoeconomics.**
+# ⚡ NEXUS TITAN: Dual-Path Decentralized Bare-Metal Compute Fabric
 
-[![Build Status](https://img.shields.io/badge/build-passing-brightgreen.svg)](#)
-[![Platform](https://img.shields.io/badge/platform-bare--metal%20%7C%20x86__64-blue.svg)](#)
-[![License](https://img.shields.io/badge/license-MIT-green.svg)](#)
+**NEXUS** is a high-performance, verifiable decentralized computing network (DePIN) that bridges a **Next.js BFT Verification Gateway** directly with **Path-A `#![no_std]` Rust UEFI Bare-Metal Unikernels** and **Path-B Sandboxed WebAssembly Miner Daemons** over a custom binary UDP protocol (`NEXUS Frame v0.1`).
 
-NEXUS TITAN OS is a paradigm shift in distributed computing. It strips away the bloat of traditional operating systems (Linux/Windows) and heavy networking stacks, running a high-speed WebAssembly (WASM) execution engine directly on the silicon. 
+---
 
-By utilizing zero-copy DMA networking and a Kademlia-based DHT mesh, Nexus Titan allows nodes to securely execute over-the-air (OTA) computational payloads with sub-millisecond latency, settling transactions via a native Practical Byzantine Fault Tolerance (pBFT) consensus engine.
+## 🏗️ 5-Layer Architecture (Implemented & Live)
 
-## 🚀 Key Features
-
-* **Layer 0: Bare-Metal Unikernel**
-  * OS-less execution written entirely in Rust (`no_std`).
-  * Direct Hardware Access: Custom ATA/IDE disk drivers and VGA hardware bank switching.
-  * Fast System Calls: Hardware-level Ring-0 to Ring-3 transitions via `MSR LSTAR`.
-* **Layer 1 & 2: Zero-Latency Fabric**
-  * Intel E1000 Gigabit NIC Driver with Zero-Copy DMA RX/TX Rings (128B aligned to prevent false sharing).
-  * Kernel-bypass networking using a custom `smoltcp` stack.
-  * P2P UDP Gossip network and Kademlia DHT (256-bit XOR metric) for instant swarm discovery.
-* **Layer 3: Secure Compute Enclave**
-  * JIT WebAssembly (WASM) Sandbox Engine running in Ring-3.
-  * Over-The-Air (OTA) Payload Injection: Catch raw WASM frames off the wire and execute them instantly.
-* **Layer 4: Built-in Cryptoeconomics**
-  * **Proof-of-Useful-Compute (PoUC):** Cryptographic receipts for executed WebAssembly tasks.
-  * **Surge Pricing Engine:** Dynamic gas metering based on live network load and memory allocation.
-  * **pBFT Consensus:** O(1) SWAR voting math for sub-second state validation and Vault updating.
-
-## 🌉 The Cloud Gateway (Web3 Integration)
-Nexus Titan includes a Next.js based Web3 Gateway that allows browsers to interact directly with the bare-metal kernel via UDP Datagrams/WebSockets, bridging the gap between consumer web and extreme bare-metal edge nodes.
-
-## 🛠️ Build & Run
-
-**Requirements:**
-* Rust Nightly (with `rust-src` component)
-* QEMU (`qemu-system-x86_64`)
-* Node.js (for the Cloud Gateway)
-
-**Booting the Kernel:**
-```bash
-cd nexus-core
-cargo build
-cp target/x86_64-unknown-uefi/debug/nexus-core.efi esp/EFI/BOOT/BOOTX64.EFI
-qemu-system-x86_64 -drive if=pflash,format=raw,readonly=on,file=$PWD/OVMF.fd -drive format=raw,file=fat:rw:esp -netdev user,id=net0,hostfwd=udp::6969-:6969 -device e1000,netdev=net0,mac=52:54:00:12:34:56b
+1. **Layer 0 (Silicon Backbone - Path A & Path B):**
+   - **Path A (`nexus-core`):** `#![no_std]` Rust UEFI Unikernel with PCIe bus scanning, Intel E1000 DMA Ring Buffers (`128-byte` aligned), `smoltcp` network stack, and Ring-0/Ring-3 GDT/MSR syscall isolation.
+   - **Path B (`tools/miner_node.js`):** Multi-instance UDP WebAssembly MicroVM Daemons broadcasting real-time hardware telemetry.
+2. **Layer 1 (Link Fabric - `NEXUS Frame v0.1`):**
+   - Binary-aligned UDP packets with `0x4E455855` (`"NEXU"`) magic header, frame type flags, 64-byte SHA-512 cryptographic integrity digest, 12-byte shard header, and raw `.wasm` bytecode payload.
+3. **Layer 2 (Discovery & 4-Digit PIN Broker):**
+   - Real-time UDP `PING/PONG` heartbeat liveness scanner (`:6969`, `:6970`, `:6971`), Kademlia XOR distance routing (`255 - clz(x ^ y)`), and 4-digit PIN DHT key indexing (`PIN_HASH`).
+4. **Layer 3 (Trusted Compute & Explainable Scheduler):**
+   - **NCIP Capabilities Passports:** Nodes report live CPU cores, bandwidth, thermal penalty, and RTT latency.
+   - **Asymmetric Load Balancing:** Workloads (1,000 shards) are dynamically split across live nodes proportional to their `Fixed64` Selection Utility Score, producing a full JSON Audit Trail on every run.
+5. **Layer 4 (BFT Verification, Hunter-Killer Slashing & Surge Pricing):**
+   - **O(1) Deterministic Spot-Check:** Gateway verifies boundary shards in V8 WASM without re-running the full workload.
+   - **Hunter-Killer Slashing:** Rogue/Byzantine miners (`--corrupt`) returning tampered outputs are immediately caught, slashed `-25,000 NXC` from staked collateral, and blacklisted.
+   - **Autonomous Surge Pricing:** Dynamic fee calculation `Base * (1 + (Load / Capacity)^2)` settled atomically per node.

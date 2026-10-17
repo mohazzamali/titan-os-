@@ -1,31 +1,105 @@
 {
-  "clientWallet": 390400,
-  "networkTvl": 9210648,
-  "lastDeployBytes": 822,
+  "clientWallet": 464799,
+  "networkTvl": 9136249,
+  "lastDeployBytes": 0,
+  "activePin": "4582",
+  "pinHash": "486ea85278bd246c",
+  "lastSchedulerAudit": {
+    "decision_id": "dec_70721DD15F55",
+    "formula": "Score = ((Cores * Trust) / (Thermal + 1)) * (1000 / Complexity)",
+    "autonomous_branch_pruning": true,
+    "zero_copy_serialization": true,
+    "candidate_nodes": [
+      {
+        "node_did": "did:nexus:node:6969f9a2b4c6e",
+        "port": 6969,
+        "computed_utility": 590.68,
+        "metrics": {
+          "cores": 32,
+          "trust_pct": 99.9,
+          "thermal_c": 65,
+          "battery_pct": 100,
+          "complexity": 82
+        },
+        "allocationPct": "52%",
+        "rangeStart": 0,
+        "rangeEnd": 2619,
+        "assignedShards": 2619
+      },
+      {
+        "node_did": "did:nexus:node:6970f9a2b4c6e",
+        "port": 6970,
+        "computed_utility": 279.35,
+        "metrics": {
+          "cores": 10,
+          "trust_pct": 98.5,
+          "thermal_c": 42,
+          "battery_pct": 83,
+          "complexity": 82
+        },
+        "allocationPct": "25%",
+        "rangeStart": 2619,
+        "rangeEnd": 3858,
+        "assignedShards": 1239
+      },
+      {
+        "node_did": "did:nexus:node:6971f9a2b4c6e",
+        "port": 6971,
+        "computed_utility": 257.45,
+        "metrics": {
+          "cores": 8,
+          "trust_pct": 95,
+          "thermal_c": 35,
+          "battery_pct": 76,
+          "complexity": 82
+        },
+        "allocationPct": "23%",
+        "rangeStart": 3858,
+        "rangeEnd": 5000,
+        "assignedShards": 1142
+      }
+    ],
+    "winning_node_did": "did:nexus:node:6969f9a2b4c6e"
+  },
   "miners": {
     "6969": {
       "port": 6969,
-      "wallet": 54800,
+      "did": "did:nexus:node_6969",
+      "wallet": 23896,
       "staked": 50000,
       "trust": 100,
       "slashed": false,
-      "tasksCompleted": 3
+      "tasksCompleted": 1,
+      "computedUtility": 590.68,
+      "cores": 32,
+      "thermal": 65,
+      "battery": 100
     },
     "6970": {
       "port": 6970,
-      "wallet": 54800,
+      "did": "did:nexus:node_6970",
+      "wallet": 11305,
       "staked": 50000,
       "trust": 100,
       "slashed": false,
-      "tasksCompleted": 3
+      "tasksCompleted": 1,
+      "computedUtility": 279.35,
+      "cores": 10,
+      "thermal": 42,
+      "battery": 83
     },
     "6971": {
       "port": 6971,
+      "did": "did:nexus:node_6971",
       "wallet": 0,
       "staked": 25000,
       "trust": 0,
       "slashed": true,
-      "tasksCompleted": 0
+      "tasksCompleted": 0,
+      "computedUtility": 257.45,
+      "cores": 8,
+      "thermal": 35,
+      "battery": 76
     }
   }
 }
