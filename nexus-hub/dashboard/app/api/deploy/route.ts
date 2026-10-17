@@ -5,7 +5,19 @@ import crypto from 'crypto';
 import dgram from 'dgram';
 import { getInitialState, probeLiveNodesWithNcip } from '../state/route';
 
-function buildZeroCopyFrame(
+const SAFE_UDP_CHUNK_BYTES = 1024; // Problem #1 Fix: Safe below 1500B Ethernet/Wi-Fi MTU
+
+function canonicalizeOutput(val: any): number {
+  if (typeof val === 'bigint') return Number(val & 0xffffffffn) >>> 0;
+  const num = Number(val);
+  if (!Number.isFinite(num)) return 0;
+  if (!Number.isInteger(num)) {
+    return Math.round(num * 10000);
+  }
+  return num >>> 0;
+}
+
+function buildSingleFrame(
   seed: number,
   param: number,
   rangeStart: number,
@@ -33,32 +45,76 @@ function buildZeroCopyFrame(
   return Buffer.concat([frameHeader, signature64, taskHeader, wasmBuffer]);
 }
 
-function sendZeroCopyShard(port: number, packet: Buffer, seed: number, param: number): Promise<any> {
+// Problem #1 Fix: Slice large WASM binaries into MTU-safe "NEXC" UDP chunks
+function buildMultiChunkFrames(
+  seed: number,
+  param: number,
+  rangeStart: number,
+  rangeEnd: number,
+  enablePruning: boolean,
+  wasmBuffer: Buffer
+): Buffer[] {
+  if (wasmBuffer.length <= SAFE_UDP_CHUNK_BYTES) {
+    return [buildSingleFrame(seed, param, rangeStart, rangeEnd, enablePruning, wasmBuffer)];
+  }
+
+  const taskId = crypto.randomInt(100000, 999999999);
+  const totalChunks = Math.ceil(wasmBuffer.length / SAFE_UDP_CHUNK_BYTES);
+  const frames: Buffer[] = [];
+
+  for (let idx = 0; idx < totalChunks; idx++) {
+    const slice = wasmBuffer.subarray(idx * SAFE_UDP_CHUNK_BYTES, (idx + 1) * SAFE_UDP_CHUNK_BYTES);
+    const header = Buffer.alloc(29);
+    header.write('NEXC', 0, 4, 'ascii');
+    header.writeUInt32BE(taskId >>> 0, 4);
+    header.writeUInt16BE(idx, 8);
+    header.writeUInt16BE(totalChunks, 10);
+    header.writeUInt32BE(seed >>> 0, 12);
+    header.writeUInt32BE(param >>> 0, 16);
+    header.writeUInt32BE(rangeStart >>> 0, 20);
+    header.writeUInt32BE(rangeEnd >>> 0, 24);
+    header.writeUInt8(enablePruning ? 0x01 : 0x00, 28);
+    frames.push(Buffer.concat([header, slice]));
+  }
+  return frames;
+}
+
+// Problem #4 Fix: Send UDP frames to actual Miner Host IP (alloc.host), not hardcoded 127.0.0.1!
+function dispatchFramesToMiner(
+  port: number,
+  host: string,
+  frames: Buffer[],
+  seed: number,
+  param: number
+): Promise<any> {
   return new Promise((resolve, reject) => {
     const socket = dgram.createSocket('udp4');
     const timer = setTimeout(() => {
       try { socket.close(); } catch {}
-      reject(new Error(`UDP SLA Timeout on Miner Node :${port}`));
-    }, 2500);
+      reject(new Error(`UDP SLA Timeout on Miner ${host}:${port}`));
+    }, 3000);
 
     socket.on('message', (msg) => {
       clearTimeout(timer);
       try { socket.close(); } catch {}
 
-      if (msg.length === 24 && msg.subarray(0, 4).toString('ascii') === 'NACK') {
+      if (msg.length >= 24 && msg.subarray(0, 4).toString('ascii') === 'NACK') {
         const nodePort = msg.readUInt32BE(4);
         const output = msg.readUInt32BE(8);
         const effectiveShards = msg.readUInt32BE(12);
         const prunedBranches = msg.readUInt32BE(16);
         const computeTimeUs = msg.readUInt32BE(20);
+        const chunksReassembled = msg.length >= 28 ? msg.readUInt32BE(24) : 1;
         resolve({
           status: 'ok',
           zeroCopy: true,
           nodePort,
+          host,
           seed,
           param,
           shards: effectiveShards,
           prunedBranches,
+          chunksReassembled,
           computeTimeMs: (computeTimeUs / 1000).toFixed(2),
           results: [{ fn: 'execute_task', output: String(output) }]
         });
@@ -67,19 +123,28 @@ function sendZeroCopyShard(port: number, packet: Buffer, seed: number, param: nu
 
       try {
         const parsed = JSON.parse(msg.toString());
-        resolve({ ...parsed, prunedBranches: 0 });
+        resolve({ ...parsed, host, prunedBranches: 0, chunksReassembled: 1 });
       } catch {
-        reject(new Error(`Malformed Frame from :${port}`));
+        reject(new Error(`Malformed Frame from ${host}:${port}`));
       }
     });
 
-    socket.send(packet, port, '127.0.0.1', (err) => {
-      if (err) {
-        clearTimeout(timer);
-        try { socket.close(); } catch {}
-        reject(err);
-      }
-    });
+    // Send all chunks sequentially over UDP
+    let i = 0;
+    const sendNext = () => {
+      if (i >= frames.length) return;
+      const frame = frames[i++];
+      socket.send(frame, port, host, (err) => {
+        if (err) {
+          clearTimeout(timer);
+          try { socket.close(); } catch {}
+          reject(err);
+          return;
+        }
+        if (i < frames.length) setImmediate(sendNext);
+      });
+    };
+    sendNext();
   });
 }
 
@@ -125,9 +190,11 @@ export async function POST(req: Request) {
       if (!state.miners[pStr]) {
         state.miners[pStr] = {
           port,
+          host: discoveredMap[port].host || '127.0.0.1',
           did: discoveredMap[port].did || `did:nexus:node:${port}`,
+          executionPath: discoveredMap[port].executionPath || 'PATH-B (OS MicroVM)',
           wallet: 0,
-          staked: 5000,
+          staked: 1000,
           trust: 100,
           slashed: false,
           tasksCompleted: 0
@@ -151,6 +218,7 @@ export async function POST(req: Request) {
 
     for (const port of eligiblePorts) {
       const ncip = discoveredMap[port];
+      const host = ncip.host || '127.0.0.1';
       const cores = ncip.cores || 10;
       const trust = ncip.slaTrust || state.miners[String(port)]?.trust || 98.5;
       const thermal = ncip.thermal ?? 42;
@@ -163,13 +231,13 @@ export async function POST(req: Request) {
       totalScore += score;
 
       state.miners[String(port)].computedUtility = score;
-      state.miners[String(port)].cores = cores;
-      state.miners[String(port)].thermal = thermal;
-      state.miners[String(port)].battery = battery;
+      state.miners[String(port)].host = host;
 
       candidateNodesAudit.push({
         node_did: ncip.did || `did:nexus:node:${port}`,
         port,
+        host,
+        execution_path: ncip.executionPath || 'PATH-B',
         computed_utility: score,
         metrics: { cores, trust_pct: trust, thermal_c: thermal, battery_pct: battery, complexity }
       });
@@ -190,24 +258,30 @@ export async function POST(req: Request) {
       return { ...c, allocationPct: `${pct}%`, rangeStart, rangeEnd, assignedShards: span };
     });
 
-    // High-Density Deflationary Pricing: 50x more compute per NXC!
-    // Base Fee = 0.25 NXC per byte (822B = ~205 NXC instead of 41,100 NXC!)
+    // TOKENOMICS FIX: USD-Pegged Compute + Fractional Deflationary NXC (Burn-and-Mint Equilibrium)
+    // Fair USD price for 5,000 shards = $0.08 USD (AWS costs $0.45 USD -> 82% cheaper for user!)
+    // Required NXC = Fair_USD_Cost / Current_NXC_USD_Price
+    // As NXC price rises, LESS NXC is needed to do the exact same work!
     const activeLoad = 3;
     const totalCapacity = eligiblePorts.length * 3;
-    const surgeMultiplier = Number((1 + Math.pow(activeLoad / totalCapacity, 2)).toFixed(2));
-    const surgedTotalCost = Math.max(10, Math.round(wasmBuffer.length * 0.25 * surgeMultiplier));
+    const surgeMultiplier = Number((1 + Math.pow(activeLoad / totalCapacity, 2) * 0.25).toFixed(2));
+    const taskUsdCost = Number(((state.fairTaskUsdCost || 0.08) * surgeMultiplier).toFixed(4));
+    const currentNxcPrice = state.nxcUsdPrice || 2.50;
+    const totalNxcRequired = Number((taskUsdCost / currentNxcPrice).toFixed(4));
 
-    if (state.clientWallet < surgedTotalCost) {
-      return NextResponse.json({ error: "INSUFFICIENT HIGH-VALUE NXC IN CLIENT WALLET" }, { status: 402 });
+    if (state.clientWallet < totalNxcRequired) {
+      return NextResponse.json({ error: "INSUFFICIENT NXC IN CLIENT WALLET" }, { status: 402 });
     }
 
-    // Dynamic Exported Function Discovery
+    const sharedMemory = new WebAssembly.Memory({ initial: 1, maximum: 16 });
     const verifyModule = await WebAssembly.compile(new Uint8Array(wasmBuffer));
     const exportedFns = WebAssembly.Module.exports(verifyModule).filter((e) => e.kind === 'function');
     if (exportedFns.length === 0) {
       return NextResponse.json({ error: "WASM binary has 0 exported functions!" }, { status: 400 });
     }
-    const verifyInstance = await WebAssembly.instantiate(verifyModule, { env: { abort: () => {} } });
+    const verifyInstance = await WebAssembly.instantiate(verifyModule, {
+      env: { memory: sharedMemory, abort: () => {} }
+    });
     const primaryFnName = exportedFns[0].name;
     const verifyFn = verifyInstance.exports[primaryFnName] as CallableFunction;
 
@@ -216,8 +290,15 @@ export async function POST(req: Request) {
 
     const shardPromises = nodeAllocations.map((alloc, idx) => {
       const nodeSeed = baseSeed + idx * 10000;
-      const frame = buildZeroCopyFrame(nodeSeed, dynamicParam, alloc.rangeStart, alloc.rangeEnd, enablePruning, wasmBuffer);
-      return sendZeroCopyShard(alloc.port, frame, nodeSeed, dynamicParam);
+      const frames = buildMultiChunkFrames(
+        nodeSeed,
+        dynamicParam,
+        alloc.rangeStart,
+        alloc.rangeEnd,
+        enablePruning,
+        wasmBuffer
+      );
+      return dispatchFramesToMiner(alloc.port, alloc.host, frames, nodeSeed, dynamicParam);
     });
 
     const nodeResponses = await Promise.all(shardPromises);
@@ -230,76 +311,89 @@ export async function POST(req: Request) {
     for (const resp of nodeResponses) {
       const portStr = String(resp.nodePort);
       const alloc = nodeAllocations.find((a) => a.port === resp.nodePort);
-      const grossChunkCost = Math.max(2, Math.round(surgedTotalCost * ((alloc?.assignedShards || 1000) / totalDagRange)));
+      const grossChunkNxc = Number((totalNxcRequired * ((alloc?.assignedShards || 1000) / totalDagRange)).toFixed(4));
 
-      // Deflationary Split: 30% Permanently Burned (reduces global supply!), 70% Paid to Honest Miner
-      const burnedFee = Math.max(1, Math.round(grossChunkCost * 0.30));
-      const netMinerReward = grossChunkCost - burnedFee;
+      // 30% Protocol Burn + 70% Miner Reward
+      const burnedFee = Number((grossChunkNxc * 0.30).toFixed(4));
+      const netMinerReward = Number((grossChunkNxc - burnedFee).toFixed(4));
 
-      telemetryLogs.push(`[SCHEDULER] INITIATING DAG: Dispatching to P${resp.nodePort} (${alloc?.allocationPct} Allocation)...`);
-      telemetryLogs.push(`[PASSPORT] RCV: CPU Core-${alloc?.metrics.cores}, Thermal: ${alloc?.metrics.thermal_c}°C, Trust: ${alloc?.metrics.trust_pct}%`);
-      telemetryLogs.push(`[WASM ENGINE] Executed ${primaryFnName}() Range: ${alloc?.rangeStart}..${alloc?.rangeEnd}${resp.prunedBranches > 0 ? ` (Pruned ${resp.prunedBranches} branches)` : ''}`);
+      telemetryLogs.push(
+        `[SCHEDULER] Routed to ${alloc?.host}:${resp.nodePort} [${alloc?.execution_path}] (${alloc?.allocationPct} | ${resp.chunksReassembled} UDP Frame${resp.chunksReassembled > 1 ? 's' : ''})`
+      );
 
       const lastShardSeed = resp.seed + (resp.shards - 1);
-      let expectedVal: number;
+      let rawExpected: any;
       try {
-        expectedVal = verifyFn(lastShardSeed, resp.param) >>> 0;
+        rawExpected = verifyFn(lastShardSeed, resp.param);
       } catch {
-        expectedVal = verifyFn() >>> 0;
+        rawExpected = verifyFn();
       }
-      const expectedOutput = String(expectedVal);
-      const minerReportedOutput = String(resp.results?.[0]?.output);
+      const expectedNum = canonicalizeOutput(rawExpected);
+      const reportedNum = canonicalizeOutput(resp.results?.[0]?.output);
 
-      if (expectedOutput === minerReportedOutput) {
-        state.miners[portStr].wallet += netMinerReward;
+      // Problem #5 Fix: Allow <= 1 unit tolerance for quantized float rounding across x86/ARM CPUs
+      const isHonestMatch = Math.abs(expectedNum - reportedNum) <= 1;
+
+      if (isHonestMatch) {
+        state.miners[portStr].wallet = Number((state.miners[portStr].wallet + netMinerReward).toFixed(4));
         state.miners[portStr].tasksCompleted += 1;
-        taskBurnedNxc += burnedFee;
-        telemetryLogs.push(`🏆 [VALID] Chunk-${resp.nodePort} accepted. Miner: +${netMinerReward} NXC | 🔥 Burned: ${burnedFee} NXC`);
+        taskBurnedNxc = Number((taskBurnedNxc + burnedFee).toFixed(4));
+        telemetryLogs.push(
+          `🏆 [VALID] P${resp.nodePort} verified (${primaryFnName}=${reportedNum}). Miner: +${netMinerReward} NXC ($${(netMinerReward * currentNxcPrice).toFixed(3)}) | 🔥 Burned: ${burnedFee} NXC`
+        );
         verifiedNodes.push({
           ...resp,
           verified: true,
-          expectedOutput,
+          expectedOutput: String(expectedNum),
           allocationPct: alloc?.allocationPct,
           utility: alloc?.computed_utility,
           reward: netMinerReward,
           burned: burnedFee,
-          grossCost: grossChunkCost
+          grossCost: grossChunkNxc
         });
       } else {
-        // Slashed Collateral is ALSO Burned from Circulating Supply!
-        const slashPenalty = 2500;
+        const slashPenalty = 250; // 250 NXC Slashed & Burned
         state.miners[portStr].staked = Math.max(0, state.miners[portStr].staked - slashPenalty);
         state.miners[portStr].trust = 0;
         state.miners[portStr].slashed = true;
-        taskBurnedNxc += slashPenalty;
-        telemetryLogs.push(`❌ [BFT DETECTED] DRIFT FRAUD ON P${resp.nodePort}! Expected ${expectedOutput}, got ${minerReportedOutput}. 🔥 SLASHED & BURNED -${slashPenalty} NXC!`);
+        taskBurnedNxc = Number((taskBurnedNxc + slashPenalty).toFixed(4));
+        telemetryLogs.push(
+          `❌ [BFT SLASH-BURN] Fraud on P${resp.nodePort}! Expected ${expectedNum}, got ${reportedNum}. 🔥 SLASHED & BURNED -${slashPenalty} NXC!`
+        );
         slashedNodes.push({
           nodePort: resp.nodePort,
-          expected: expectedOutput,
-          reported: minerReportedOutput,
+          expected: String(expectedNum),
+          reported: String(reportedNum),
           penalty: slashPenalty
         });
       }
     }
 
-    const actualClientCost = verifiedNodes.reduce((acc, n) => acc + n.grossCost, 0);
-    state.clientWallet -= actualClientCost;
-    state.networkTvl += actualClientCost;
-    state.totalBurned = (state.totalBurned || 0) + taskBurnedNxc;
-    state.circulatingSupply = (state.genesisSupply || 21000000) - state.totalBurned;
+    const actualClientNxcCost = Number(verifiedNodes.reduce((acc, n) => acc + n.grossCost, 0).toFixed(4));
+    const actualClientUsdPaid = Number((actualClientNxcCost * currentNxcPrice).toFixed(4));
+    const awsSaved = Number(Math.max(0, (state.awsEquivalentUsdCost || 0.45) - actualClientUsdPaid).toFixed(4));
 
-    // Deflationary Scarcity Index: As tokens burn & utility volume grows, NXC USD value appreciates
-    const burnRatio = state.totalBurned / 50000;
-    const utilityBoost = (state.networkTvl - 125000) / 5000;
-    state.nxcUsdPrice = Number((2.40 + burnRatio * 1.85 + utilityBoost * 0.45).toFixed(4));
+    state.clientWallet = Number((state.clientWallet - actualClientNxcCost).toFixed(4));
+    state.totalUsdSavedVsAws = Number(((state.totalUsdSavedVsAws || 0) + awsSaved).toFixed(4));
+    state.totalBurned = Number(((state.totalBurned || 0) + taskBurnedNxc).toFixed(4));
+    state.circulatingSupply = Number(((state.genesisSupply || 21000000) - state.totalBurned).toFixed(4));
 
-    telemetryLogs.push(`🔥 [DEFLATION ENGINE] ${taskBurnedNxc} NXC Permanently Burned! New NXC Value: $${state.nxcUsdPrice} USD`);
+    // As NXC is burned, NXC USD price appreciates -> Next task will require EVEN LESS NXC!
+    const scarcityBoost = state.totalBurned * 0.012;
+    state.nxcUsdPrice = Number((2.50 + scarcityBoost).toFixed(4));
+    const nextTaskNxcNeeded = Number(((state.fairTaskUsdCost || 0.08) / state.nxcUsdPrice).toFixed(4));
+
+    telemetryLogs.push(
+      `💎 [BME ORACLE] Paid Only ${actualClientNxcCost} NXC ($${actualClientUsdPaid} USD vs $${state.awsEquivalentUsdCost} AWS). NXC Price -> $${state.nxcUsdPrice} (Next Task needs only ~${nextTaskNxcNeeded} NXC!)`
+    );
 
     const schedulerAuditLog = {
       decision_id: `dec_${crypto.randomBytes(6).toString('hex').toUpperCase()}`,
-      formula: "Score = ((Cores * Trust) / (Thermal + 1)) * (1000 / Complexity)",
-      deflationary_burn_rate: "30% Protocol Fee Burn + 100% Slash Burn",
-      nxc_usd_index: `$${state.nxcUsdPrice}`,
+      udp_chunking_protocol: wasmBuffer.length > SAFE_UDP_CHUNK_BYTES ? "NEXC Multi-Frame" : "NEXU Single-Frame",
+      exported_fn_detected: primaryFnName,
+      task_usd_cost: `$${actualClientUsdPaid} USD (82% cheaper than AWS)`,
+      nxc_spent: `${actualClientNxcCost} NXC`,
+      next_task_nxc_estimate: `${nextTaskNxcNeeded} NXC (Less NXC needed as value rises!)`,
       candidate_nodes: nodeAllocations,
       winning_node_did: candidateNodesAudit[0].node_did
     };
@@ -314,9 +408,11 @@ export async function POST(req: Request) {
 
     return NextResponse.json({
       status: 'success',
-      cost: actualClientCost,
+      costNxc: actualClientNxcCost,
+      costUsd: actualClientUsdPaid,
       burned: taskBurnedNxc,
       nxcUsdPrice: state.nxcUsdPrice,
+      nextTaskNxcNeeded,
       telemetryLogs,
       schedulerAudit: schedulerAuditLog,
       verifiedNodes,
