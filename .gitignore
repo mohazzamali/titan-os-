@@ -7,3 +7,4 @@
 *.img
 node_modules/
 .next/
+nexus-hub/dashboard/state.json
