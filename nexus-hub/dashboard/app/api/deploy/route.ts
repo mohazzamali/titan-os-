@@ -10,8 +10,6 @@ const SAFE_UDP_CHUNK_BYTES = 1024;
 function synthesizeInstantWasm(mode: string): Buffer {
   let bodyOps: number[];
   if (mode === 'blender_raytrace') {
-    // 3D Raytracing Lambertian Light + Specular Shading Kernel:
-    // Computes pixel intensity & normal reflection across scanline shards
     bodyOps = [
       0x20, 0x00, 0x41, 0x17, 0x6c,
       0x20, 0x01, 0x41, 0x29, 0x6c, 0x6a,
@@ -19,7 +17,6 @@ function synthesizeInstantWasm(mode: string): Buffer {
       0x41, 0x9d, 0x03, 0x6c, 0x0b
     ];
   } else if (mode === 'ai_tensor_gemm') {
-    // AI Neural Network Gradient Descent & Attention Tensor Kernel
     bodyOps = [
       0x20, 0x00, 0x41, 0x11, 0x6c,
       0x20, 0x01, 0x41, 0x1f, 0x6c, 0x6a,
@@ -27,7 +24,6 @@ function synthesizeInstantWasm(mode: string): Buffer {
       0x41, 0x83, 0x20, 0x6c, 0x0b
     ];
   } else {
-    // Financial Monte Carlo & XOR Stream Cipher Kernel
     bodyOps = [
       0x20, 0x00, 0x20, 0x01, 0x73,
       0x41, 0x8d, 0x93, 0x65, 0x6c,
@@ -221,15 +217,83 @@ function dispatchFramesToMiner(
   });
 }
 
+// 100% REAL MATHEMATICAL GRADIENT DESCENT ON USER'S DATA VECTOR (Zero Fake Loss Numbers!)
+// Fits linear neural unit Y_i = W * X_i + B across user's 4 data points [y0, y1, y2, y3] for X=[1, 2, 3, 4]
+function runRealGradientDescentOnData(targetY: number[], learningRateScale: number, totalShards: number) {
+  const X = [1, 2, 3, 4];
+  const n = 4;
+
+  // Normalize scale for numerical stability
+  const maxVal = Math.max(1, ...targetY.map(v => Math.abs(v)));
+  const normY = targetY.map(v => v / maxVal);
+
+  let w = 0.0;
+  let b = 0.0;
+
+  // Calculate REAL Initial MSE Error before any training (w=0, b=0)
+  let initialMse = 0;
+  for (let i = 0; i < n; i++) {
+    const err = normY[i] - (w * X[i] + b);
+    initialMse += err * err;
+  }
+  initialMse = initialMse / n;
+  const initialLossPct = Number(Math.min(99.9, (initialMse * 100)).toFixed(2));
+
+  // Run actual Gradient Descent steps proportional to shards & learning rate
+  const lr = Math.min(0.08, Math.max(0.005, (learningRateScale || 42) / 1000));
+  const steps = Math.min(2000, Math.max(50, Math.floor(totalShards / 10)));
+
+  for (let epoch = 0; epoch < steps; epoch++) {
+    let dw = 0;
+    let db = 0;
+    for (let i = 0; i < n; i++) {
+      const pred = w * X[i] + b;
+      const diff = pred - normY[i];
+      dw += (2 / n) * diff * X[i];
+      db += (2 / n) * diff;
+    }
+    w -= lr * dw;
+    b -= lr * db;
+  }
+
+  // Calculate REAL Final MSE Error after training on the user's exact numbers!
+  let finalMse = 0;
+  for (let i = 0; i < n; i++) {
+    const err = normY[i] - (w * X[i] + b);
+    finalMse += err * err;
+  }
+  finalMse = finalMse / n;
+  const finalLossPct = Number((finalMse * 100).toFixed(3));
+  const accuracyPct = Number(Math.max(0, Math.min(100, 100 - finalLossPct)).toFixed(2));
+
+  // Un-normalize learned weights to match user's actual number scale
+  const realSlopeW = Number((w * maxVal).toFixed(4));
+  const realBiasB = Number((b * maxVal).toFixed(4));
+  const nextStep5Prediction = Number((realSlopeW * 5 + realBiasB).toFixed(2));
+
+  return {
+    epochsCompleted: steps,
+    initialLossPct,
+    finalLossPct,
+    accuracyPct,
+    learnedWeights: {
+      w1_slope: realSlopeW,
+      bias: realBiasB,
+      next_index5_prediction: nextStep5Prediction
+    }
+  };
+}
+
 export async function POST(req: Request) {
   try {
     let customParam: number | null = null;
     let customWasmBase64: string | null = null;
-    let customFileName = 'nexus_hybrid_payload.wasm';
+    let customFileName = '';
     let enablePruning = true;
     let synthMode = 'blender_raytrace';
-    let dataVectorStr = '45, 80, 120, 200';
+    let dataVectorStr = '45, 80, 120, 165';
     let totalDagRange = 5000;
+    let useOnDiskRustDefault = false;
 
     try {
       const body = await req.json();
@@ -238,7 +302,7 @@ export async function POST(req: Request) {
       }
       if (body?.wasmBase64 && typeof body.wasmBase64 === 'string') {
         customWasmBase64 = body.wasmBase64;
-        customFileName = body.fileName || 'uploaded_custom.wasm';
+        customFileName = body.fileName || 'user_uploaded.wasm';
       }
       if (body?.enablePruning !== undefined) enablePruning = Boolean(body.enablePruning);
       if (body?.synthMode) synthMode = body.synthMode;
@@ -246,6 +310,7 @@ export async function POST(req: Request) {
       if (body?.totalShards && Number(body.totalShards) >= 500) {
         totalDagRange = Math.min(50000, Number(body.totalShards));
       }
+      if (body?.useOnDiskRustDefault) useOnDiskRustDefault = Boolean(body.useOnDiskRustDefault);
     } catch {}
 
     const defaultWasmPath = path.resolve(
@@ -255,13 +320,25 @@ export async function POST(req: Request) {
     const statePath = path.resolve(process.cwd(), 'state.json');
 
     let wasmBuffer: Buffer;
+    let binarySourceOrigin = '';
+
     if (customWasmBase64) {
       wasmBuffer = Buffer.from(customWasmBase64, 'base64');
-    } else if (synthMode !== 'rust_matrix') {
-      wasmBuffer = synthesizeInstantWasm(synthMode);
-      customFileName = `studio_${synthMode}.wasm`;
-    } else {
+      binarySourceOrigin = `USER UPLOADED FILE (${customFileName})`;
+    } else if (synthMode === 'rust_matrix') {
+      if (!useOnDiskRustDefault) {
+        return NextResponse.json(
+          { error: "Aapne Mode 4 (Custom .WASM Upload) chuna hai par koi .wasm file upload nahi ki! Kripya 'Choose File' se apni .wasm file chunein, ya 'Use On-Disk Rust 822B Binary' tick karein." },
+          { status: 400 }
+        );
+      }
       wasmBuffer = fs.readFileSync(defaultWasmPath);
+      customFileName = 'nexus_hybrid_payload.wasm';
+      binarySourceOrigin = 'ON-DISK RUST COMPILED BINARY (822 Bytes)';
+    } else {
+      wasmBuffer = synthesizeInstantWasm(synthMode);
+      customFileName = `auto_synthesized_${synthMode}.wasm`;
+      binarySourceOrigin = `IN-RAM AUTO-SYNTHESIZED BYTECODE (${wasmBuffer.length} Bytes — Built-in Studio Template)`;
     }
 
     if (!fs.existsSync(statePath)) {
@@ -340,16 +417,7 @@ export async function POST(req: Request) {
         host,
         pubKeyHex: ncip.pubKeyHex,
         execution_path: ncip.executionPath,
-        computed_utility: score,
-        real_telemetry: {
-          cpu: ncip.cpuModel,
-          worker_threads: `${cores}/${ncip.hostPhysicalCores}`,
-          os_load_1m: ncip.loadAvg1m,
-          thermal_c: thermal,
-          battery_pct: battery,
-          free_ram_mb: ncip.freeRamMb,
-          udp_rtt_ms: ncip.latencyMs
-        }
+        computed_utility: score
       });
     }
 
@@ -382,7 +450,6 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "INSUFFICIENT NXC IN CLIENT WALLET" }, { status: 402 });
     }
 
-    // X-RAY WASM INSPECTOR: Decompile exports, imports, memory & hex instructions for the user!
     const sharedMemory = new WebAssembly.Memory({ initial: 1, maximum: 16 });
     const verifyModule = await WebAssembly.compile(new Uint8Array(wasmBuffer));
     const exportedItems = WebAssembly.Module.exports(verifyModule);
@@ -399,7 +466,9 @@ export async function POST(req: Request) {
 
     const wasmInspector = {
       fileName: customFileName,
+      binaryOrigin: binarySourceOrigin,
       byteSize: wasmBuffer.length,
+      wasmBase64Download: wasmBuffer.toString('base64'),
       magicHeaderHex: wasmBuffer.subarray(0, 8).toString('hex').toUpperCase(),
       bytecodeHexPreview: wasmBuffer.subarray(0, Math.min(48, wasmBuffer.length)).toString('hex').match(/.{1,2}/g)?.join(' ') || '',
       exportedFunctions: exportedFns.map(f => `${f.name}(seed: i32, param: i32) -> i32`),
@@ -419,7 +488,7 @@ export async function POST(req: Request) {
       parsedInputVec[0] ?? 45,
       parsedInputVec[1] ?? 80,
       parsedInputVec[2] ?? 120,
-      parsedInputVec[3] ?? 200
+      parsedInputVec[3] ?? 165
     ];
 
     const shardPromises = nodeAllocations.map((alloc, idx) => {
@@ -490,12 +559,10 @@ export async function POST(req: Request) {
           allocationPct: alloc?.allocationPct,
           status: 'VERIFIED',
           computeTimeUs: resp.computeTimeUs,
-          gops: resp.gops
+          gops: resp.gops,
+          bandVectorHash: resp.minerVectorOut?.[0]
         });
 
-        telemetryLogs.push(
-          `🏆 [ED25519 + BFT OK] Node :${resp.nodePort} completed Shards ${alloc?.rangeStart}..${alloc?.rangeEnd} in ${resp.computeTimeUs}µs (+${netMinerReward} NXC)`
-        );
         verifiedNodes.push({
           ...resp,
           verified: true,
@@ -516,9 +583,6 @@ export async function POST(req: Request) {
         state.miners[portStr].slashed = true;
         taskBurnedNxc = Number((taskBurnedNxc + netSlashBurn).toFixed(4));
 
-        telemetryLogs.push(
-          `❌ [BFT FRAUD DETECTED] Node :${resp.nodePort} corrupted Shards ${alloc?.rangeStart}..${alloc?.rangeEnd}! Slashed -${slashPenalty} NXC!`
-        );
         slashedNodes.push({
           nodePort: resp.nodePort,
           expected: String(expectedNum),
@@ -570,12 +634,10 @@ export async function POST(req: Request) {
               allocationPct: alloc.allocationPct,
               status: 'RESCUED_BY_HERO',
               computeTimeUs: rescueResp.computeTimeUs,
-              gops: rescueResp.gops
+              gops: rescueResp.gops,
+              bandVectorHash: rescueResp.minerVectorOut?.[0]
             });
 
-            telemetryLogs.push(
-              `🛡️ [SELF-HEALED] Corrupted Shards ${alloc.rangeStart}..${alloc.rangeEnd} re-computed by Hero Node :${primaryHeroNode.port} in ${rescueResp.computeTimeUs}µs (+${rescueBounty} NXC Bounty!)`
-            );
             verifiedNodes.push({
               ...rescueResp,
               verified: true,
@@ -590,21 +652,8 @@ export async function POST(req: Request) {
       }
     }
 
-    // Compute AI Training Metrics derived from Miner WASM Vector outputs
-    const learnedSlope = Number((2.45 + ((verifiedMinerVectorOut[0] || 1) % 100) / 1000).toFixed(4));
-    const learnedBias = Number((12.8 + ((verifiedMinerVectorOut[1] || 1) % 50) / 100).toFixed(4));
-    const aiTrainingSummary = {
-      epochsCompleted: totalDagRange,
-      initialLossPct: 86.4,
-      finalLossPct: Number(Math.max(0.12, (500 / totalDagRange) * 1.8).toFixed(2)),
-      accuracyPct: Number(Math.min(99.88, 100 - Math.max(0.12, (500 / totalDagRange) * 1.8)).toFixed(2)),
-      learnedWeights: {
-        w1_weight: learnedSlope,
-        w2_attention: Number(((verifiedMinerVectorOut[2] || 500) % 1000 / 1000).toFixed(4)),
-        bias: learnedBias
-      },
-      lossCurve: [86.4, 54.2, 29.8, 14.1, 5.6, 1.9, Number(Math.max(0.12, (500 / totalDagRange) * 1.8).toFixed(2))]
-    };
+    // 100% Real Gradient Descent fit on the user's actual inputVector!
+    const aiTrainingSummary = runRealGradientDescentOnData(inputVector, dynamicParam, totalDagRange);
 
     const actualClientNxcCost = Number(verifiedNodes.reduce((acc, n) => acc + n.grossCost, 0).toFixed(4));
     const actualClientUsdPaid = Number((actualClientNxcCost * currentNxcPrice).toFixed(4));
@@ -623,27 +672,12 @@ export async function POST(req: Request) {
     state.blockHeight = (state.blockHeight || 1) + 1;
     state.merkleStateSeal = computeStateMerkleSeal(state);
 
-    const l1AnchorCalldata = `0x9b3d4f1a${state.blockHeight.toString(16).padStart(8, '0')}${state.merkleStateSeal}`;
-
-    const schedulerAuditLog = {
-      block_height: state.blockHeight,
-      wasm_inspector: wasmInspector,
-      scanline_bands: scanlineBands,
-      ai_training_summary: aiTrainingSummary,
-      miner_vector_in: inputVector,
-      miner_vector_out: verifiedMinerVectorOut,
-      l1_smart_contract_calldata: l1AnchorCalldata,
-      candidate_nodes: candidateNodesAudit
-    };
-
-    state.lastSchedulerAudit = schedulerAuditLog;
     fs.writeFileSync(statePath, JSON.stringify(state, null, 2));
 
     return NextResponse.json({
       status: 'success',
       blockHeight: state.blockHeight,
       merkleStateSeal: state.merkleStateSeal,
-      l1AnchorCalldata,
       swarmGops: runSwarmGops,
       wasmInspector,
       scanlineBands,
@@ -656,7 +690,6 @@ export async function POST(req: Request) {
       burned: taskBurnedNxc,
       nxcUsdPrice: state.nxcUsdPrice,
       telemetryLogs,
-      schedulerAudit: schedulerAuditLog,
       verifiedNodes,
       slashedNodes
     }, { status: 200 });
