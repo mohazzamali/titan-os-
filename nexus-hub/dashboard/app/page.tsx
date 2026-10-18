@@ -12,12 +12,12 @@ const WORKLOAD_GUIDES: Record<string, {
 }> = {
   blender_raytrace: {
     title: "🎨 1. Blender-Style 3D Raytracing Render (Built-In 66B WASM Shader)",
-    binarySourceNote: "Bina file upload kiye isliye chala kyunki is mode mein Gateway khud RAM ke andar 66-Byte ka Real WebAssembly Raytracing Shader (`auto_synthesized_blender_raytrace.wasm`) banakar Miners ko bhejta hai!",
+    binarySourceNote: "Is mode mein Gateway RAM ke andar 66-Byte ka Real WebAssembly Raytracing Shader (`auto_synthesized_blender_raytrace.wasm`) banakar Miners ko bhejta hai.",
     whatIsInsideWasm: "Is 66-byte .wasm binary ke andar 3D Ray-Sphere Intersection aur Lambertian Light Shading ka machine opcode (`00 61 73 6d...`) hai.",
     whyComputeNeeded: "3D image ko horizontal pattiyon (Scanline Bands) mein tod kar alag-alag Miners par parallel compute karwaya jata hai.",
     inputLabel: "Light & Color Vector [LightX, LightY, RedHue, BlueHue]:",
     paramLabel: "Green Hue / Seed:",
-    outputExplanation: "Niche 3D Canvas par roshni (LightX, LightY) aur rang sidha aapke input numbers aur Miners ke output se badalte hain! Numbers badal kar dekhiye!"
+    outputExplanation: "Niche 3D Canvas par roshni (LightX, LightY) aur rang sidha aapke input numbers aur Miners ke output se badalte hain!"
   },
   ai_tensor_gemm: {
     title: "🧠 2. Real Linear Regression AI Training (Built-In 66B WASM + Real MSE)",
@@ -26,7 +26,7 @@ const WORKLOAD_GUIDES: Record<string, {
     whyComputeNeeded: "Aapke diye gaye 4 data points `[Y1, Y2, Y3, Y4]` (for X=1,2,3,4) ke beech ki line seekhne ke liye hundreds of epochs chalaye jate hain.",
     inputLabel: "Training Target Data [Y for X=1, X=2, X=3, X=4]:",
     paramLabel: "Learning Rate (e.g. 42):",
-    outputExplanation: "Ab Loss % koi fixed number nahi hai! Agar aap سیدھی line wala data (jaise `10, 20, 30, 40`) denge toh Final Loss `0.001%` aayega, aur tedha-medha data (`10, 900, 5, 400`) denge toh Loss zyada aayega!"
+    outputExplanation: "Loss % aapke diye gaye numbers par real Gradient Descent se nikalta hai! Seedhi line (`10, 20, 30, 40`) par Loss ~0.00% aayega, aur random numbers par Loss zyada aayega!"
   },
   xor_cipher: {
     title: "🔐 3. Cryptographic Vector Audit (Built-In 61B WASM Cipher)",
@@ -59,12 +59,14 @@ export default function Home() {
   const [miners, setMiners] = useState<Record<string, any>>({});
 
   const [synthMode, setSynthMode] = useState("blender_raytrace");
+  const [executedMode, setExecutedMode] = useState<string | null>(null);
   const [totalShards, setTotalShards] = useState<number>(5000);
   const [dataVectorStr, setDataVectorStr] = useState("45, 80, 120, 165");
   const [customParam, setCustomParam] = useState<string>("42");
   const [uploadedWasm, setUploadedWasm] = useState<{ name: string; base64: string; size: number } | null>(null);
   const [useOnDiskRustDefault, setUseOnDiskRustDefault] = useState(false);
   const [errorBanner, setErrorBanner] = useState<string | null>(null);
+  const [pendingNotice, setPendingNotice] = useState<string | null>(null);
   const [isComputing, setIsComputing] = useState(false);
 
   const [wasmInspector, setWasmInspector] = useState<any>(null);
@@ -77,6 +79,19 @@ export default function Home() {
 
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+
+  // Helper to immediately clear stale outputs whenever user changes Mode, File, or Inputs!
+  const clearPreviousExecutionOutput = (reason?: string) => {
+    setExecutedMode(null);
+    setVectorResult(null);
+    setWasmInspector(null);
+    setScanlineBands([]);
+    setAiSummary(null);
+    setLastDiagnostic(null);
+    setShowCorruptedPreview(false);
+    setErrorBanner(null);
+    if (reason) setPendingNotice(reason);
+  };
 
   const fetchState = async () => {
     try {
@@ -100,7 +115,7 @@ export default function Home() {
   }, []);
 
   useEffect(() => {
-    if (!canvasRef.current || !vectorResult) return;
+    if (executedMode !== 'blender_raytrace' || !canvasRef.current || !vectorResult) return;
     const canvas = canvasRef.current;
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
@@ -198,12 +213,22 @@ export default function Home() {
         ctx.fillText(label, 8, yPos);
       });
     }
-  }, [vectorResult, scanlineBands, showCorruptedPreview, customParam, totalShards]);
+  }, [executedMode, vectorResult, scanlineBands, showCorruptedPreview, customParam, totalShards]);
+
+  const handleModeChange = (newMode: string) => {
+    setSynthMode(newMode);
+    if (newMode !== 'rust_matrix') {
+      setUploadedWasm(null);
+      if (fileInputRef.current) fileInputRef.current.value = '';
+    }
+    clearPreviousExecutionOutput(
+      `🔄 Aapne "${WORKLOAD_GUIDES[newMode]?.title}" select kiya hai — Iska result compute karne ke liye "🚀 COMPUTE ON SWARM" button dabayein!`
+    );
+  };
 
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    setErrorBanner(null);
     const reader = new FileReader();
     reader.onload = () => {
       const bytes = new Uint8Array(reader.result as ArrayBuffer);
@@ -211,17 +236,19 @@ export default function Home() {
       for (let i = 0; i < bytes.byteLength; i++) binary += String.fromCharCode(bytes[i]);
       setUploadedWasm({ name: file.name, base64: btoa(binary), size: file.size });
       setSynthMode('rust_matrix');
+      clearPreviousExecutionOutput(
+        `📂 Nayi file "${file.name}" (${file.size}B) load ho gayi hai — Ab "🚀 COMPUTE ON SWARM" dabayein!`
+      );
     };
     reader.readAsArrayBuffer(file);
   };
 
-  // FIX: Complete File Removal Function (clears React state AND HTML <input type="file"> value!)
   const clearUploadedFile = () => {
     setUploadedWasm(null);
-    setErrorBanner(null);
     if (fileInputRef.current) {
       fileInputRef.current.value = '';
     }
+    clearPreviousExecutionOutput("🗑️ Uploaded .wasm file hata di gayi hai.");
   };
 
   const downloadActiveWasmBinary = () => {
@@ -238,6 +265,7 @@ export default function Home() {
 
   const injectPayload = async () => {
     setErrorBanner(null);
+    setPendingNotice(null);
     setIsComputing(true);
 
     try {
@@ -246,8 +274,8 @@ export default function Home() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           customParam: customParam ? Number(customParam) : 42,
-          wasmBase64: uploadedWasm?.base64,
-          fileName: uploadedWasm?.name,
+          wasmBase64: synthMode === 'rust_matrix' ? uploadedWasm?.base64 : undefined,
+          fileName: synthMode === 'rust_matrix' ? uploadedWasm?.name : undefined,
           enablePruning: true,
           synthMode,
           dataVectorStr,
@@ -258,9 +286,10 @@ export default function Home() {
       const data = await res.json();
 
       if (res.ok) {
-        if (data.wasmInspector) setWasmInspector(data.wasmInspector);
-        if (data.scanlineBands) setScanlineBands(data.scanlineBands);
-        if (data.aiTrainingSummary) setAiSummary(data.aiTrainingSummary);
+        setExecutedMode(data.executedMode || synthMode);
+        setWasmInspector(data.wasmInspector || null);
+        setScanlineBands(data.scanlineBands || []);
+        setAiSummary(data.aiTrainingSummary || null);
         if (data.inputVector && data.outputVector) {
           setVectorResult({ input: data.inputVector, output: data.outputVector });
         }
@@ -295,35 +324,36 @@ export default function Home() {
   };
 
   const downloadOutputResult = () => {
-    if (synthMode === 'blender_raytrace' && canvasRef.current) {
+    if (!executedMode || !vectorResult) return;
+    if (executedMode === 'blender_raytrace' && canvasRef.current) {
       const link = document.createElement('a');
       link.download = `nexus_3d_render_block_${blockHeight}.png`;
       link.href = canvasRef.current.toDataURL('image/png');
       link.click();
       return;
     }
-    const payload = {
+    const payload: Record<string, any> = {
       nexusBlock: blockHeight,
       merkleStateSeal: merkleSeal,
-      workload: synthMode,
+      executedWorkload: executedMode,
       wasmInspector,
-      inputVector: vectorResult?.input,
-      verifiedMinerOutputVector: vectorResult?.output,
-      aiModelWeights: aiSummary?.learnedWeights
+      inputVector: vectorResult.input,
+      verifiedMinerOutputVector: vectorResult.output,
+      scanlineBands
     };
+    if (executedMode === 'ai_tensor_gemm' && aiSummary) {
+      payload.aiTrainingSummary = aiSummary;
+    }
     const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
     const link = document.createElement('a');
-    link.download = `nexus_verified_output_block_${blockHeight}.json`;
+    link.download = `nexus_${executedMode}_block_${blockHeight}.json`;
     link.href = URL.createObjectURL(blob);
     link.click();
   };
 
   const resetLedger = async () => {
     await fetch('/api/state', { method: 'DELETE' });
-    setLastDiagnostic(null);
-    setVectorResult(null);
-    setWasmInspector(null);
-    setErrorBanner(null);
+    clearPreviousExecutionOutput("🔄 Genesis Ledger Reset ho gaya hai.");
     fetchState();
   };
 
@@ -332,6 +362,8 @@ export default function Home() {
   const dynamicAwsCost = ((totalShards / 1000) * 0.090).toFixed(3);
   const currentNxcPerTask = (Number(dynamicUsdCost) / nxcUsdPrice).toFixed(4);
   const allKnownPorts = Array.from(new Set([6969, 6970, 6971, ...Object.keys(miners).map(Number), ...livePorts])).sort();
+
+  const hasValidCurrentResult = Boolean(vectorResult && executedMode === synthMode);
 
   const predictedAiValue = aiSummary
     ? (Number(aiTestInput || 0) * aiSummary.learnedWeights.w1_slope + aiSummary.learnedWeights.bias).toFixed(2)
@@ -345,10 +377,10 @@ export default function Home() {
         <div className="bg-gradient-to-r from-gray-900 via-black to-gray-900 border-b border-green-500/30 px-6 py-4 flex flex-col md:flex-row justify-between items-center gap-2">
           <div>
             <h1 className="text-white font-bold text-lg md:text-xl tracking-wider">
-              NEXUS TITAN // v9.5 TRUE-CORE VISUAL STUDIO
+              NEXUS TITAN // v9.6 STRICT-EXECUTION VISUAL STUDIO
             </h1>
             <p className="text-[11px] text-cyan-400">
-              TRANSPARENT WASM ORIGIN • REMOVE/CLEAR FILE CONTROL • REAL DATA GRADIENT DESCENT • APPLE M4 SILICON
+              ZERO AUTO-LEAK BETWEEN MODES • STRICT EXECUTION LOCK • REAL DATA GRADIENT DESCENT • APPLE M4 SILICON
             </p>
           </div>
           <div className="flex items-center gap-3">
@@ -361,7 +393,7 @@ export default function Home() {
           </div>
         </div>
 
-        {/* Error Alert if user tries Mode 4 without uploading a file */}
+        {/* Error Alert */}
         {errorBanner && (
           <div className="bg-red-950/80 border-b border-red-500 px-6 py-3 text-xs text-red-200 font-bold flex justify-between items-center">
             <span>⚠️ {errorBanner}</span>
@@ -387,7 +419,7 @@ export default function Home() {
               <label className="text-xs text-gray-400 block mb-1">Select Workload Mode:</label>
               <select
                 value={synthMode}
-                onChange={(e) => { setSynthMode(e.target.value); setErrorBanner(null); }}
+                onChange={(e) => handleModeChange(e.target.value)}
                 className="w-full bg-black border border-cyan-500/50 text-cyan-300 px-3 py-2 rounded text-sm font-bold"
               >
                 <option value="blender_raytrace">🎨 1. Blender-Style 3D Raytracing (Built-In 66B WASM Shader)</option>
@@ -397,10 +429,9 @@ export default function Home() {
               </select>
             </div>
 
-            {/* Transparent Explanation of WHERE the .wasm comes from */}
             <div className="p-2.5 bg-cyan-950/20 border border-cyan-500/30 rounded text-[11px] text-cyan-200">
               <strong>📌 .WASM Source: </strong>
-              {uploadedWasm
+              {synthMode === 'rust_matrix' && uploadedWasm
                 ? `Aapki Upload Ki Gayi File Active Hai: ${uploadedWasm.name} (${uploadedWasm.size} Bytes)`
                 : guide.binarySourceNote}
             </div>
@@ -411,7 +442,10 @@ export default function Home() {
                 <input
                   type="text"
                   value={dataVectorStr}
-                  onChange={(e) => setDataVectorStr(e.target.value)}
+                  onChange={(e) => {
+                    setDataVectorStr(e.target.value);
+                    clearPreviousExecutionOutput("🔄 Input numbers badle gaye hain — Naya result pane ke liye COMPUTE dabayein!");
+                  }}
                   className="w-full bg-black border border-green-500/40 text-yellow-300 px-2.5 py-1.5 rounded"
                 />
               </div>
@@ -420,13 +454,15 @@ export default function Home() {
                 <input
                   type="number"
                   value={customParam}
-                  onChange={(e) => setCustomParam(e.target.value)}
+                  onChange={(e) => {
+                    setCustomParam(e.target.value);
+                    clearPreviousExecutionOutput("🔄 Parameter badla gaya hai — Naya result pane ke liye COMPUTE dabayein!");
+                  }}
                   className="w-full bg-black border border-green-500/40 text-green-400 px-2.5 py-1.5 rounded"
                 />
               </div>
             </div>
 
-            {/* File Upload + Explicit REMOVE FILE Button */}
             <div className="p-3 bg-black/70 border border-gray-800 rounded space-y-2 text-xs">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <div className="flex items-center gap-2">
@@ -455,7 +491,10 @@ export default function Home() {
                   <input
                     type="checkbox"
                     checked={useOnDiskRustDefault}
-                    onChange={(e) => setUseOnDiskRustDefault(e.target.checked)}
+                    onChange={(e) => {
+                      setUseOnDiskRustDefault(e.target.checked);
+                      clearPreviousExecutionOutput();
+                    }}
                     className="accent-yellow-400"
                   />
                   Mere paas abhi file nahi hai — Project ki On-Disk Rust Binary (nexus_hybrid_payload.wasm, 822B) use karein
@@ -478,12 +517,12 @@ export default function Home() {
               <span className="text-xs font-bold bg-cyan-500/20 text-cyan-300 border border-cyan-500/40 px-2.5 py-0.5 rounded">
                 STEP 2: ACTIVE .WASM X-RAY INSPECTOR
               </span>
-              {wasmInspector && (
+              {hasValidCurrentResult && wasmInspector && (
                 <button
                   onClick={downloadActiveWasmBinary}
                   className="text-[10px] bg-gray-800 hover:bg-gray-700 text-cyan-300 border border-cyan-500/40 px-2.5 py-1 rounded font-bold"
                 >
-                  📥 Download This .wasm ({wasmInspector.byteSize}B)
+                  📥 Download Executed .wasm ({wasmInspector.byteSize}B)
                 </button>
               )}
             </div>
@@ -500,10 +539,10 @@ export default function Home() {
               </p>
             </div>
 
-            {wasmInspector ? (
+            {hasValidCurrentResult && wasmInspector ? (
               <div className="p-3 bg-cyan-950/15 border border-cyan-500/30 rounded text-[11px] space-y-1">
                 <div className="flex justify-between">
-                  <span className="text-gray-400">Active Binary Origin:</span>
+                  <span className="text-gray-400">Executed Binary Origin:</span>
                   <span className="text-yellow-300 font-bold">{wasmInspector.binaryOrigin}</span>
                 </div>
                 <div className="flex justify-between">
@@ -519,25 +558,25 @@ export default function Home() {
                 </div>
               </div>
             ) : (
-              <div className="p-3 bg-black/50 border border-gray-800/80 rounded text-xs text-gray-500 text-center">
-                &quot;🚀 COMPUTE ON SWARM&quot; dabayein — jo .wasm file Miners par jayegi uska poora X-Ray yahan dikhega!
+              <div className="p-3 bg-black/50 border border-gray-800/80 rounded text-xs text-yellow-300/80 text-center">
+                {pendingNotice || 'Left side par "🚀 COMPUTE ON SWARM" dabayein — execute hone ke baad is mode ki .wasm file ka X-Ray yahan khulega!'}
               </div>
             )}
           </div>
         </div>
 
-        {/* STEP 3: VISUAL OUTPUT STUDIO */}
+        {/* STEP 3: STRICTLY LOCKED VISUAL OUTPUT STUDIO */}
         <div className="p-6 bg-[#040608] border-b border-green-500/30">
           <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-3 mb-4">
             <div>
               <span className="text-xs font-bold bg-purple-500/20 text-purple-300 border border-purple-500/40 px-2.5 py-0.5 rounded">
-                STEP 3: COMPUTE HONE KE BAAD AAPKA RESULT (100% DATA-DRIVEN)
+                STEP 3: COMPUTE HONE KE BAAD AAPKA RESULT (STRICT EXECUTION LOCK)
               </span>
               <p className="text-xs text-gray-400 mt-1">{guide.outputExplanation}</p>
             </div>
-            {vectorResult && (
+            {hasValidCurrentResult && (
               <div className="flex items-center gap-3">
-                {synthMode === 'blender_raytrace' && lastDiagnostic?.fraud && (
+                {executedMode === 'blender_raytrace' && lastDiagnostic?.fraud && (
                   <button
                     onClick={() => setShowCorruptedPreview(!showCorruptedPreview)}
                     className={`text-xs px-3 py-1.5 rounded border font-bold ${
@@ -553,23 +592,28 @@ export default function Home() {
                   onClick={downloadOutputResult}
                   className="text-xs bg-cyan-600 hover:bg-cyan-500 text-white font-bold px-4 py-1.5 rounded shadow"
                 >
-                  💾 DOWNLOAD RESULT ({synthMode === 'blender_raytrace' ? '.PNG IMAGE' : '.JSON MODEL'})
+                  💾 DOWNLOAD RESULT ({executedMode === 'blender_raytrace' ? '.PNG IMAGE' : '.JSON MODEL'})
                 </button>
               </div>
             )}
           </div>
 
-          {!vectorResult ? (
-            <div className="p-10 border border-dashed border-gray-800 rounded-lg text-center text-gray-500 text-sm">
-              Upar &quot;🚀 COMPUTE ON SWARM&quot; button dabayein — aapka Result yahan live bankar aayega!
+          {!hasValidCurrentResult || !vectorResult ? (
+            <div className="p-10 border border-dashed border-gray-800 rounded-lg text-center space-y-2">
+              <p className="text-yellow-300 text-sm font-bold">
+                {pendingNotice || '⏳ Is Mode ka koi task abhi execute nahi hua hai.'}
+              </p>
+              <p className="text-gray-500 text-xs">
+                Jab tak aap upar &quot;🚀 COMPUTE ON SWARM&quot; button nahi dabayenge, tab tak koi purana ya auto-result yahan nahi dikhega.
+              </p>
             </div>
           ) : (
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-center">
               
-              {synthMode === 'blender_raytrace' ? (
+              {executedMode === 'blender_raytrace' ? (
                 <div className="flex flex-col items-center bg-black p-3 rounded-lg border border-cyan-500/30">
                   <div className="w-full flex justify-between text-[11px] text-gray-400 mb-2">
-                    <span>🎨 DISTRIBUTED 3D RAYTRACED CANVAS (Try changing Light/Color Vector!)</span>
+                    <span>🎨 DISTRIBUTED 3D RAYTRACED CANVAS</span>
                     <span className={showCorruptedPreview ? "text-red-400 font-bold" : "text-green-400 font-bold"}>
                       {showCorruptedPreview ? "⚠️ P6971 CORRUPTED PIXELS" : "✅ 100% BFT HEALED RENDER"}
                     </span>
@@ -581,7 +625,7 @@ export default function Home() {
                     className="rounded border border-gray-800 w-full max-w-[420px]"
                   />
                 </div>
-              ) : synthMode === 'ai_tensor_gemm' && aiSummary ? (
+              ) : executedMode === 'ai_tensor_gemm' && aiSummary ? (
                 <div className="bg-black p-4 rounded-lg border border-purple-500/30 space-y-3">
                   <div className="flex justify-between items-center border-b border-gray-800 pb-2">
                     <span className="text-xs font-bold text-purple-300">🧠 REAL GRADIENT DESCENT ON [{vectorResult.input.join(', ')}]</span>
@@ -621,7 +665,9 @@ export default function Home() {
                 </div>
               ) : (
                 <div className="bg-black p-4 rounded-lg border border-green-500/30 space-y-2 text-xs">
-                  <p className="text-white font-bold">🔐 VERIFIED WASM LINEAR MEMORY TRANSFORMATION TABLE</p>
+                  <p className="text-white font-bold">
+                    🔐 VERIFIED WASM LINEAR MEMORY TRANSFORMATION ({wasmInspector?.fileName})
+                  </p>
                   <div className="grid grid-cols-2 gap-2 pt-2">
                     {vectorResult.input.map((inp, idx) => (
                       <div key={idx} className="p-2 bg-gray-950 border border-gray-800 rounded flex justify-between">
@@ -636,7 +682,7 @@ export default function Home() {
               {/* Right Panel: Per-Miner Execution Breakdown */}
               <div className="bg-black/90 p-4 rounded-lg border border-gray-800 space-y-3 text-xs">
                 <p className="text-white font-bold border-b border-gray-800 pb-1.5">
-                  📊 SWARM EXECUTION & SELF-HEALING PROOF:
+                  📊 SWARM EXECUTION & SELF-HEALING PROOF ({wasmInspector?.fileName}):
                 </p>
 
                 <div className="space-y-2">

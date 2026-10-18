@@ -217,20 +217,15 @@ function dispatchFramesToMiner(
   });
 }
 
-// 100% REAL MATHEMATICAL GRADIENT DESCENT ON USER'S DATA VECTOR (Zero Fake Loss Numbers!)
-// Fits linear neural unit Y_i = W * X_i + B across user's 4 data points [y0, y1, y2, y3] for X=[1, 2, 3, 4]
 function runRealGradientDescentOnData(targetY: number[], learningRateScale: number, totalShards: number) {
   const X = [1, 2, 3, 4];
   const n = 4;
-
-  // Normalize scale for numerical stability
   const maxVal = Math.max(1, ...targetY.map(v => Math.abs(v)));
   const normY = targetY.map(v => v / maxVal);
 
   let w = 0.0;
   let b = 0.0;
 
-  // Calculate REAL Initial MSE Error before any training (w=0, b=0)
   let initialMse = 0;
   for (let i = 0; i < n; i++) {
     const err = normY[i] - (w * X[i] + b);
@@ -239,7 +234,6 @@ function runRealGradientDescentOnData(targetY: number[], learningRateScale: numb
   initialMse = initialMse / n;
   const initialLossPct = Number(Math.min(99.9, (initialMse * 100)).toFixed(2));
 
-  // Run actual Gradient Descent steps proportional to shards & learning rate
   const lr = Math.min(0.08, Math.max(0.005, (learningRateScale || 42) / 1000));
   const steps = Math.min(2000, Math.max(50, Math.floor(totalShards / 10)));
 
@@ -256,7 +250,6 @@ function runRealGradientDescentOnData(targetY: number[], learningRateScale: numb
     b -= lr * db;
   }
 
-  // Calculate REAL Final MSE Error after training on the user's exact numbers!
   let finalMse = 0;
   for (let i = 0; i < n; i++) {
     const err = normY[i] - (w * X[i] + b);
@@ -266,7 +259,6 @@ function runRealGradientDescentOnData(targetY: number[], learningRateScale: numb
   const finalLossPct = Number((finalMse * 100).toFixed(3));
   const accuracyPct = Number(Math.max(0, Math.min(100, 100 - finalLossPct)).toFixed(2));
 
-  // Un-normalize learned weights to match user's actual number scale
   const realSlopeW = Number((w * maxVal).toFixed(4));
   const realBiasB = Number((b * maxVal).toFixed(4));
   const nextStep5Prediction = Number((realSlopeW * 5 + realBiasB).toFixed(2));
@@ -322,19 +314,21 @@ export async function POST(req: Request) {
     let wasmBuffer: Buffer;
     let binarySourceOrigin = '';
 
-    if (customWasmBase64) {
-      wasmBuffer = Buffer.from(customWasmBase64, 'base64');
-      binarySourceOrigin = `USER UPLOADED FILE (${customFileName})`;
-    } else if (synthMode === 'rust_matrix') {
-      if (!useOnDiskRustDefault) {
+    // Strict Mode-Specific Binary Selection (Only use uploaded file in Mode 4 or if explicitly present)
+    if (synthMode === 'rust_matrix') {
+      if (customWasmBase64) {
+        wasmBuffer = Buffer.from(customWasmBase64, 'base64');
+        binarySourceOrigin = `USER UPLOADED FILE (${customFileName})`;
+      } else if (useOnDiskRustDefault) {
+        wasmBuffer = fs.readFileSync(defaultWasmPath);
+        customFileName = 'nexus_hybrid_payload.wasm';
+        binarySourceOrigin = 'ON-DISK RUST COMPILED BINARY (822 Bytes)';
+      } else {
         return NextResponse.json(
           { error: "Aapne Mode 4 (Custom .WASM Upload) chuna hai par koi .wasm file upload nahi ki! Kripya 'Choose File' se apni .wasm file chunein, ya 'Use On-Disk Rust 822B Binary' tick karein." },
           { status: 400 }
         );
       }
-      wasmBuffer = fs.readFileSync(defaultWasmPath);
-      customFileName = 'nexus_hybrid_payload.wasm';
-      binarySourceOrigin = 'ON-DISK RUST COMPILED BINARY (822 Bytes)';
     } else {
       wasmBuffer = synthesizeInstantWasm(synthMode);
       customFileName = `auto_synthesized_${synthMode}.wasm`;
@@ -510,7 +504,6 @@ export async function POST(req: Request) {
 
     const verifiedNodes: any[] = [];
     const slashedNodes: any[] = [];
-    const telemetryLogs: string[] = [];
     const scanlineBands: any[] = [];
     let taskBurnedNxc = 0;
     let runSwarmGops = 0;
@@ -559,8 +552,7 @@ export async function POST(req: Request) {
           allocationPct: alloc?.allocationPct,
           status: 'VERIFIED',
           computeTimeUs: resp.computeTimeUs,
-          gops: resp.gops,
-          bandVectorHash: resp.minerVectorOut?.[0]
+          gops: resp.gops
         });
 
         verifiedNodes.push({
@@ -634,8 +626,7 @@ export async function POST(req: Request) {
               allocationPct: alloc.allocationPct,
               status: 'RESCUED_BY_HERO',
               computeTimeUs: rescueResp.computeTimeUs,
-              gops: rescueResp.gops,
-              bandVectorHash: rescueResp.minerVectorOut?.[0]
+              gops: rescueResp.gops
             });
 
             verifiedNodes.push({
@@ -652,8 +643,10 @@ export async function POST(req: Request) {
       }
     }
 
-    // 100% Real Gradient Descent fit on the user's actual inputVector!
-    const aiTrainingSummary = runRealGradientDescentOnData(inputVector, dynamicParam, totalDagRange);
+    // ONLY compute AI Training Summary when actually running AI Mode!
+    const aiTrainingSummary = synthMode === 'ai_tensor_gemm'
+      ? runRealGradientDescentOnData(inputVector, dynamicParam, totalDagRange)
+      : null;
 
     const actualClientNxcCost = Number(verifiedNodes.reduce((acc, n) => acc + n.grossCost, 0).toFixed(4));
     const actualClientUsdPaid = Number((actualClientNxcCost * currentNxcPrice).toFixed(4));
@@ -676,6 +669,7 @@ export async function POST(req: Request) {
 
     return NextResponse.json({
       status: 'success',
+      executedMode: synthMode,
       blockHeight: state.blockHeight,
       merkleStateSeal: state.merkleStateSeal,
       swarmGops: runSwarmGops,
@@ -689,7 +683,6 @@ export async function POST(req: Request) {
       awsCostUsd: dynamicAwsUsdCost,
       burned: taskBurnedNxc,
       nxcUsdPrice: state.nxcUsdPrice,
-      telemetryLogs,
       verifiedNodes,
       slashedNodes
     }, { status: 200 });
