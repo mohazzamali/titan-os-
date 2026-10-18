@@ -4,3 +4,6 @@
 .DS_Store
 nexus-hub/dashboard/state.json
 .nexus_keystore/
+*.img
+FULL_SYSTEM_AUDIT.txt
+titan_os_audit.txt
