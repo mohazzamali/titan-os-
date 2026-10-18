@@ -1,10 +1,6 @@
 **/target/
-*.pcap
+**/node_modules/
+**/.next/
 .DS_Store
-*AUDIT*.txt
-*CODE*.txt
-*.iso
-*.img
-node_modules/
-.next/
 nexus-hub/dashboard/state.json
+.nexus_keystore/

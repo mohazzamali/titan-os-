@@ -5,7 +5,7 @@ import dgram from 'dgram';
 import crypto from 'crypto';
 
 const DEFAULT_PORTS = [6969, 6970, 6971];
-const LEDGER_SECRET = 'NEXUS_TITAN_RING0_MERKLE_SEAL_KEY_v7';
+const LEDGER_SECRET = 'NEXUS_TITAN_RING0_MERKLE_SEAL_KEY_v8';
 
 const globalAny = globalThis as any;
 if (!globalAny.__nexusNatNodes) {
@@ -35,6 +35,7 @@ export interface MinerRecord {
   host: string;
   did: string;
   pubKeyHex?: string;
+  cpuModel?: string;
   executionPath?: string;
   wallet: number;
   staked: number;
@@ -44,9 +45,15 @@ export interface MinerRecord {
   rescuesCompleted?: number;
   ed25519VerifiedCount?: number;
   gopsThroughput?: number;
+  lastComputeUs?: number;
   cores?: number;
+  hostPhysicalCores?: number;
+  loadAvg1m?: number;
   thermal?: number;
   battery?: number;
+  freeRamMb?: number;
+  totalRamMb?: number;
+  latencyMs?: number;
   computedUtility?: number;
 }
 
@@ -60,7 +67,8 @@ export function computeStateMerkleSeal(stateObj: any): string {
       p: k,
       w: stateObj.miners[k].wallet,
       s: stateObj.miners[k].staked,
-      sl: stateObj.miners[k].slashed
+      sl: stateObj.miners[k].slashed,
+      t: stateObj.miners[k].tasksCompleted
     }))
   });
   return crypto.createHmac('sha256', LEDGER_SECRET).update(canonicalPayload).digest('hex');
@@ -77,16 +85,14 @@ export function getInitialState() {
     circulatingSupply: 21000000.0,
     totalBurned: 0.0,
     nxcUsdPrice: 2.50,
-    fairTaskUsdCost: 0.08,
-    awsEquivalentUsdCost: 0.45,
     totalUsdSavedVsAws: 0.0,
     totalSwarmGops: 0.0,
     networkTvl: 50000.0,
     lastSchedulerAudit: null as any,
     miners: {
-      "6969": { port: 6969, host: "127.0.0.1", did: "did:nexus:ed25519:0xNX_6969", executionPath: "PATH-A (Ring-0 Unikernel + SIMD Tensor)", wallet: 0, staked: 1000, trust: 100, slashed: false, tasksCompleted: 0, rescuesCompleted: 0, ed25519VerifiedCount: 0, gopsThroughput: 0 },
-      "6970": { port: 6970, host: "127.0.0.1", did: "did:nexus:ed25519:0xNX_6970", executionPath: "PATH-B (OS MicroVM + WebGPU/SIMD)", wallet: 0, staked: 1000, trust: 100, slashed: false, tasksCompleted: 0, rescuesCompleted: 0, ed25519VerifiedCount: 0, gopsThroughput: 0 },
-      "6971": { port: 6971, host: "127.0.0.1", did: "did:nexus:ed25519:0xNX_6971", executionPath: "PATH-B (OS MicroVM + WebGPU/SIMD)", wallet: 0, staked: 1000, trust: 100, slashed: false, tasksCompleted: 0, rescuesCompleted: 0, ed25519VerifiedCount: 0, gopsThroughput: 0 }
+      "6969": { port: 6969, host: "127.0.0.1", did: "did:nexus:ed25519:pending_6969", wallet: 0, staked: 1000, trust: 100, slashed: false, tasksCompleted: 0, rescuesCompleted: 0, ed25519VerifiedCount: 0, gopsThroughput: 0 },
+      "6970": { port: 6970, host: "127.0.0.1", did: "did:nexus:ed25519:pending_6970", wallet: 0, staked: 1000, trust: 100, slashed: false, tasksCompleted: 0, rescuesCompleted: 0, ed25519VerifiedCount: 0, gopsThroughput: 0 },
+      "6971": { port: 6971, host: "127.0.0.1", did: "did:nexus:ed25519:pending_6971", wallet: 0, staked: 1000, trust: 100, slashed: false, tasksCompleted: 0, rescuesCompleted: 0, ed25519VerifiedCount: 0, gopsThroughput: 0 }
     } as Record<string, MinerRecord>
   };
   base.merkleStateSeal = computeStateMerkleSeal(base);
@@ -112,35 +118,20 @@ export function probeLiveNodesWithNcip(): Promise<Record<number, any>> {
         candidateTargets.push({ port: p, host: natEntry.host || '127.0.0.1' });
       }
       if (now - natEntry.lastSeen < 6000) {
-        discovered[p] = { ...natEntry, latencyMs: 1.1 };
+        discovered[p] = { ...natEntry, latencyMs: 0.8 };
       }
     }
 
     const pingStart = performance.now();
     client.on('message', (msg, rinfo) => {
-      const rttMs = Math.max(0.5, Number((performance.now() - pingStart).toFixed(2)));
+      const rttMs = Math.max(0.2, Number((performance.now() - pingStart).toFixed(2)));
       const text = msg.toString();
       const senderHost = rinfo.address === '::1' ? '127.0.0.1' : (rinfo.address || '127.0.0.1');
       if (text.startsWith('PONG:')) {
         try {
           const parsed = JSON.parse(text.slice(5));
           discovered[parsed.port] = { ...parsed, host: senderHost, latencyMs: rttMs };
-        } catch {
-          const port = parseInt(text.slice(5), 10);
-          if (!isNaN(port)) {
-            discovered[port] = {
-              port,
-              host: senderHost,
-              did: `did:nexus:unikernel:${port}`,
-              executionPath: 'PATH-A (Bare-Metal Ring-0)',
-              cores: 16,
-              thermal: 38,
-              battery: 100,
-              slaTrust: 99.9,
-              latencyMs: rttMs
-            };
-          }
-        }
+        } catch {}
       }
     });
 
@@ -151,7 +142,7 @@ export function probeLiveNodesWithNcip(): Promise<Record<number, any>> {
     setTimeout(() => {
       try { client.close(); } catch {}
       resolve(discovered);
-    }, 120);
+    }, 100);
   });
 }
 
@@ -163,12 +154,6 @@ export async function GET() {
   }
 
   const raw = JSON.parse(fs.readFileSync(statePath, 'utf8'));
-  if (raw.totalSwarmGops === undefined) {
-    const fresh = getInitialState();
-    fs.writeFileSync(statePath, JSON.stringify(fresh, null, 2));
-    return NextResponse.json({ ...fresh, activeNodes: 0, livePorts: [] });
-  }
-
   const expectedSeal = computeStateMerkleSeal(raw);
   const tamperDetected = raw.merkleStateSeal !== expectedSeal;
 
@@ -182,9 +167,10 @@ export async function GET() {
       raw.miners[pStr] = {
         port,
         host: ncip.host || '127.0.0.1',
-        did: ncip.did || `did:nexus:node:${port}`,
+        did: ncip.did,
         pubKeyHex: ncip.pubKeyHex,
-        executionPath: ncip.executionPath || 'PATH-B (OS MicroVM)',
+        cpuModel: ncip.cpuModel,
+        executionPath: ncip.executionPath,
         wallet: 0,
         staked: 1000,
         trust: 100,
@@ -195,13 +181,20 @@ export async function GET() {
         gopsThroughput: 0
       };
     }
-    raw.miners[pStr].host = ncip.host || raw.miners[pStr].host || '127.0.0.1';
-    raw.miners[pStr].did = ncip.did || raw.miners[pStr].did;
-    raw.miners[pStr].pubKeyHex = ncip.pubKeyHex || raw.miners[pStr].pubKeyHex;
-    raw.miners[pStr].executionPath = ncip.executionPath || raw.miners[pStr].executionPath;
-    raw.miners[pStr].cores = ncip.cores ?? 10;
-    raw.miners[pStr].thermal = ncip.thermal ?? 42;
-    raw.miners[pStr].battery = ncip.battery ?? 83;
+    const m = raw.miners[pStr];
+    m.host = ncip.host || m.host || '127.0.0.1';
+    m.did = ncip.did || m.did;
+    m.pubKeyHex = ncip.pubKeyHex || m.pubKeyHex;
+    m.cpuModel = ncip.cpuModel || m.cpuModel;
+    m.executionPath = ncip.executionPath || m.executionPath;
+    m.cores = ncip.cores;
+    m.hostPhysicalCores = ncip.hostPhysicalCores;
+    m.loadAvg1m = ncip.loadAvg1m;
+    m.thermal = ncip.thermal;
+    m.battery = ncip.battery;
+    m.freeRamMb = ncip.freeRamMb;
+    m.totalRamMb = ncip.totalRamMb;
+    m.latencyMs = ncip.latencyMs;
   }
 
   const eligiblePorts = livePorts.filter((p) => !raw.miners[String(p)]?.slashed);
@@ -214,7 +207,6 @@ export async function GET() {
   });
 }
 
-// FIX #3: Global WAN HTTP Registration Endpoint (Allows internet miners to register over HTTPS)
 export async function POST(req: Request) {
   try {
     const passport = await req.json();

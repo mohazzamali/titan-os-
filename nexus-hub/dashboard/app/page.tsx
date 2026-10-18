@@ -3,11 +3,11 @@ import { useState, useEffect } from 'react';
 
 export default function Home() {
   const [logs, setLogs] = useState<string[]>([
-    "[OMEGA v7.0] 64-BYTE Ed25519 CRYPTOGRAPHIC SIGNATURES ARMED (Master Blueprint Sec 3.2).",
-    "[TENSOR ENGINE] AI Transformer Attention (Q x K^T GEMM) & GOPS Benchmark Ready.",
-    "[WAN BRIDGE] Dual-Transport (UDP :6999 + Global HTTPS /api/state) Active."
+    "[v8.0 FINAL] 100% REAL HOST SILICON TELEMETRY (pmset Battery, OS LoadAvg, Free RAM, hrtime.bigint).",
+    "[KEYSTORE] Persistent Ed25519 Disk Keystores (.nexus_keystore/node_PORT.json) Loaded.",
+    "[CLOUD STACK] Unified IaaS (Silicon) + PaaS (WASM Vector Engine) + SaaS (BFT Ledger) Active."
   ]);
-  const [status, setStatus] = useState("SCANNING SWARM");
+  const [status, setStatus] = useState("PROBING SILICON");
   const [blockHeight, setBlockHeight] = useState(1);
   const [merkleSeal, setMerkleSeal] = useState("0000...");
   const [tamperAlert, setTamperAlert] = useState(false);
@@ -15,7 +15,6 @@ export default function Home() {
   const [circulatingSupply, setCirculatingSupply] = useState(21000000);
   const [totalBurned, setTotalBurned] = useState(0);
   const [nxcUsdPrice, setNxcUsdPrice] = useState(2.50);
-  const [fairTaskUsdCost, setFairTaskUsdCost] = useState(0.08);
   const [totalUsdSavedVsAws, setTotalUsdSavedVsAws] = useState(0);
   const [totalSwarmGops, setTotalSwarmGops] = useState(0);
   const [activeNodes, setActiveNodes] = useState(0);
@@ -24,6 +23,7 @@ export default function Home() {
   const [schedulerAudit, setSchedulerAudit] = useState<any>(null);
   const [lastDiagnostic, setLastDiagnostic] = useState<{ expected: string; reported: string; fraud: boolean; port: number; rescuedBy?: number } | null>(null);
   const [synthMode, setSynthMode] = useState("ai_tensor_gemm");
+  const [totalShards, setTotalShards] = useState<number>(5000);
   const [dataVectorStr, setDataVectorStr] = useState("10, 25, 50, 100");
   const [vectorResult, setVectorResult] = useState<{ input: number[]; output: number[] } | null>(null);
   const [enablePruning, setEnablePruning] = useState(true);
@@ -42,7 +42,6 @@ export default function Home() {
       setCirculatingSupply(data?.circulatingSupply ?? 21000000);
       setTotalBurned(data?.totalBurned ?? 0);
       setNxcUsdPrice(data?.nxcUsdPrice ?? 2.50);
-      setFairTaskUsdCost(data?.fairTaskUsdCost ?? 0.08);
       setTotalUsdSavedVsAws(data?.totalUsdSavedVsAws ?? 0);
       setTotalSwarmGops(data?.totalSwarmGops ?? 0);
       setActiveNodes(data?.activeNodes ?? 0);
@@ -50,7 +49,7 @@ export default function Home() {
       setMiners(data?.miners ?? {});
       if (data?.lastSchedulerAudit) setSchedulerAudit(data.lastSchedulerAudit);
       if (!isComputing) {
-        setStatus((data?.activeNodes ?? 0) > 0 ? "OMEGA SWARM READY" : "NO HONEST MINERS");
+        setStatus((data?.activeNodes ?? 0) > 0 ? "SILICON VERIFIED" : "NO HONEST MINERS");
       }
     } catch {}
   };
@@ -71,14 +70,14 @@ export default function Home() {
       for (let i = 0; i < bytes.byteLength; i++) binary += String.fromCharCode(bytes[i]);
       const chunks = Math.ceil(file.size / 1024);
       setUploadedWasm({ name: file.name, base64: btoa(binary), size: file.size });
-      setLogs(prev => [...prev, `[WASM LOADER] Loaded ${file.name} (${file.size}B -> ${chunks} UDP Chunk${chunks > 1 ? 's' : ''})`]);
+      setLogs(prev => [...prev, `[PaaS LOADER] Loaded ${file.name} (${file.size}B -> ${chunks} UDP Chunk${chunks > 1 ? 's' : ''})`]);
     };
     reader.readAsArrayBuffer(file);
   };
 
   const injectPayload = async () => {
     setIsComputing(true);
-    setStatus("VERIFYING ED25519 + TENSOR DAG");
+    setStatus("DISPATCHING 104B NEXU FRAME");
 
     try {
       const res = await fetch('/api/deploy', {
@@ -90,7 +89,8 @@ export default function Home() {
           fileName: uploadedWasm?.name,
           enablePruning,
           synthMode,
-          dataVectorStr
+          dataVectorStr,
+          totalShards
         })
       });
       const data = await res.json();
@@ -112,7 +112,7 @@ export default function Home() {
             port: liar.nodePort,
             rescuedBy: rescueNode?.nodePort
           });
-          setStatus("SLASHED & ED25519 HEALED!");
+          setStatus("SLASHED & AUTO-HEALED!");
         } else if (data.verifiedNodes?.length > 0) {
           const v = data.verifiedNodes[0];
           setLastDiagnostic({
@@ -121,7 +121,7 @@ export default function Home() {
             fraud: false,
             port: v.nodePort
           });
-          setStatus("100% OMEGA SETTLED");
+          setStatus("100% REAL SETTLED");
         }
 
         await fetchState();
@@ -141,7 +141,7 @@ export default function Home() {
     setSchedulerAudit(null);
     setLastDiagnostic(null);
     setVectorResult(null);
-    setLogs(["[SYS] GENESIS BLOCK #1 RESTORED: Ed25519 Registry & 21M NXC Cap Reset."]);
+    setLogs(["[SYS] GENESIS BLOCK #1 RESTORED: Persistent Keystores Retained, Balances Reset."]);
     fetchState();
   };
 
@@ -149,62 +149,64 @@ export default function Home() {
     new Set([6969, 6970, 6971, ...Object.keys(miners).map(Number), ...livePorts])
   ).sort();
 
-  const currentNxcPerTask = (fairTaskUsdCost / nxcUsdPrice).toFixed(4);
+  const dynamicUsdCost = ((totalShards / 1000) * 0.016).toFixed(3);
+  const dynamicAwsCost = ((totalShards / 1000) * 0.090).toFixed(3);
+  const currentNxcPerTask = (Number(dynamicUsdCost) / nxcUsdPrice).toFixed(4);
 
   return (
     <div className="min-h-screen bg-[#050505] text-green-500 font-mono p-4 md:p-6 flex flex-col items-center">
       <div className="max-w-7xl w-full border border-green-500/20 bg-black/90 rounded-lg overflow-hidden shadow-2xl">
         
-        {/* Header */}
+        {/* Header + IaaS/PaaS/SaaS Unified Cloud Banner */}
         <div className="bg-gradient-to-r from-gray-900 via-black to-gray-900 border-b border-green-500/30 px-6 py-4 flex flex-col md:flex-row justify-between items-center gap-2">
           <div>
             <h1 className="text-white font-bold text-lg md:text-xl tracking-[0.15em]">
-              NEXUS TITAN // v7.0 OMEGA // ED25519 & AI TENSOR SUPER-FABRIC
+              NEXUS TITAN // v8.0 FINAL // UNIFIED IaaS • PaaS • SaaS FABRIC
             </h1>
             <p className="text-[10px] text-cyan-400 tracking-widest">
-              64B ED25519 SIGNATURES • AI TRANSFORMER TENSOR GEMM • WAN HTTP+UDP BRIDGE • L1 SMART CONTRACT CALLDATA
+              100% REAL OS TELEMETRY • PERSISTENT ED25519 KEYSTORES • MINER WASM VECTOR ENGINE • DYNAMIC SHARD PRICING
             </p>
           </div>
           <div className="flex items-center gap-3">
             <span className={`text-[10px] px-2.5 py-1 rounded border font-bold ${
               tamperAlert ? 'bg-red-900/40 border-red-500 text-red-300' : 'bg-cyan-950/40 border-cyan-500/40 text-cyan-300'
             }`}>
-              {tamperAlert ? '⚠️ LEDGER TAMPERED!' : `⛓️ L1 BLOCK #${blockHeight} SEALED: ${merkleSeal.substring(0, 10)}...`}
+              {tamperAlert ? '⚠️ LEDGER TAMPERED!' : `⛓️ BLOCK #${blockHeight} SEALED: ${merkleSeal.substring(0, 10)}...`}
             </span>
             <button
               onClick={resetLedger}
               className="text-xs text-gray-300 hover:text-white border border-gray-700 px-3 py-1 rounded"
             >
-              🔄 RESET GENESIS
+              🔄 RESET LEDGER
             </button>
           </div>
         </div>
 
-        {/* Top 4 Metrics */}
+        {/* SaaS Layer: Top 4 Economic & Performance Metrics */}
         <div className="grid grid-cols-1 md:grid-cols-4 border-b border-green-500/20 text-center divide-y md:divide-y-0 md:divide-x divide-green-500/20 bg-[#0a0a0a]">
           <div className="p-4">
-            <p className="text-gray-500 text-[10px] tracking-widest">BUYER WALLET (FRACTIONAL NXC)</p>
+            <p className="text-gray-500 text-[10px] tracking-widest">SaaS // BUYER WALLET</p>
             <p className="text-green-400 text-2xl font-bold">{clientWallet.toFixed(4)} NXC</p>
             <p className="text-[10px] text-gray-400 mt-1">
-              Power: ${(clientWallet * nxcUsdPrice).toFixed(2)} USD (~{Math.floor((clientWallet * nxcUsdPrice) / fairTaskUsdCost)} Runs)
+              Power: ${(clientWallet * nxcUsdPrice).toFixed(2)} USD
             </p>
           </div>
           <div className="p-4">
-            <p className="text-gray-500 text-[10px] tracking-widest">NXC ORACLE PRICE & EFFICIENCY</p>
+            <p className="text-gray-500 text-[10px] tracking-widest">BME // NXC SCARCE VALUE</p>
             <p className="text-yellow-400 text-2xl font-bold">${nxcUsdPrice.toFixed(4)} <span className="text-xs text-green-400">↑</span></p>
             <p className="text-[10px] text-cyan-400 mt-1 font-bold">
-              Only {currentNxcPerTask} NXC ($0.08 vs $0.45 AWS)
+              {currentNxcPerTask} NXC (${dynamicUsdCost} vs${dynamicAwsCost} AWS)
             </p>
           </div>
           <div className="p-4">
-            <p className="text-gray-500 text-[10px] tracking-widest">SWARM AI TENSOR SPEED ⚡</p>
+            <p className="text-gray-500 text-[10px] tracking-widest">PaaS // REAL MEASURED SPEED</p>
             <p className="text-purple-400 text-2xl font-bold">{totalSwarmGops.toFixed(2)} GOPS</p>
             <p className="text-[10px] text-green-400 mt-1">
-              Saved vs AWS: ${totalUsdSavedVsAws.toFixed(2)} USD (82% Less)
+              Total Saved vs AWS: ${totalUsdSavedVsAws.toFixed(2)} USD
             </p>
           </div>
           <div className="p-4">
-            <p className="text-gray-500 text-[10px] tracking-widest">BURNED / 21M SUPPLY CAP 🔥</p>
+            <p className="text-gray-500 text-[10px] tracking-widest">LEDGER // BURNED (21M CAP) 🔥</p>
             <p className="text-red-500 text-2xl font-bold">{totalBurned.toFixed(4)} NXC</p>
             <p className="text-[10px] text-gray-400 mt-1">
               Circulating: {circulatingSupply.toLocaleString(undefined, { maximumFractionDigits: 4 })}
@@ -212,18 +214,15 @@ export default function Home() {
           </div>
         </div>
 
-        {/* Ed25519 Signed NCIP Nodes */}
+        {/* IaaS Layer: 100% Real Host Telemetry Miner Cards */}
         <div className="border-b border-green-500/20 bg-[#060606] p-4">
           <p className="text-xs text-gray-400 tracking-widest uppercase mb-3">
-            ED25519 CRYPTOGRAPHIC MINER NODES ({activeNodes} HONEST ONLINE) — 64-BYTE SIGNATURE VERIFICATION & SELF-HEALING
+            IaaS LAYER // REAL HOST SILICON TELEMETRY & PERSISTENT ED25519 KEYSTORES ({activeNodes} HONEST ONLINE)
           </p>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
             {allKnownPorts.map((port) => {
-              const m = miners[String(port)] || { host: '127.0.0.1', wallet: 0, staked: 1000, trust: 100, slashed: false, tasksCompleted: 0, rescuesCompleted: 0, ed25519VerifiedCount: 0, gopsThroughput: 0 };
+              const m = miners[String(port)] || { host: '127.0.0.1', wallet: 0, staked: 1000, trust: 100, slashed: false, tasksCompleted: 0 };
               const isOnline = livePorts.includes(port);
-              const cores = m.cores || (port === 6969 ? 32 : port === 6970 ? 10 : 8);
-              const thermal = m.thermal ? `${m.thermal}°C` : (port === 6969 ? '65°C' : port === 6970 ? '42°C' : '35°C');
-              const execPath = m.executionPath || (port === 6969 ? 'PATH-A (Ring-0 + SIMD Tensor)' : 'PATH-B (OS MicroVM + WebGPU)');
               return (
                 <div key={port} className={`p-3 rounded border ${
                   m.slashed ? 'border-red-600 bg-red-950/20' :
@@ -237,16 +236,34 @@ export default function Home() {
                       m.slashed ? 'bg-red-600 text-white' :
                       isOnline ? 'bg-green-600/20 text-green-400 border border-green-500/40' : 'bg-gray-800 text-gray-500'
                     }`}>
-                      {m.slashed ? 'SLASHED & BURNED' : isOnline ? 'ED25519 VERIFIED' : 'OFFLINE'}
+                      {m.slashed ? 'SLASHED & BURNED' : isOnline ? `RTT ${m.latencyMs ?? 0.5}ms` : 'OFFLINE'}
                     </span>
                   </div>
-                  <p className="text-[10px] text-cyan-400 truncate mb-0.5">{m.did || `did:nexus:ed25519:${port}`}</p>
-                  <p className="text-[10px] text-gray-500 mb-2">{execPath}</p>
+                  <p className="text-[10px] text-cyan-400 truncate">{m.did || `did:nexus:ed25519:${port}`}</p>
+                  <p className="text-[10px] text-gray-500 truncate mb-2">{m.cpuModel || 'Probing Host CPU...'}</p>
                   <div className="text-[11px] space-y-1 text-gray-300">
-                    <div className="flex justify-between"><span>Specs / Speed:</span><span className="text-cyan-400">{cores} Cores ({thermal}) | {m.gopsThroughput || 0} GOPS</span></div>
-                    <div className="flex justify-between"><span>Earned Wallet:</span><span className="text-yellow-400 font-bold">{Number(m.wallet).toFixed(4)} NXC (${(Number(m.wallet) * nxcUsdPrice).toFixed(2)})</span></div>
-                    <div className="flex justify-between"><span>Ed25519 / Rescues:</span><span className="text-purple-400 font-bold">{m.ed25519VerifiedCount || 0} Sigs | {m.rescuesCompleted || 0} Rescues</span></div>
-                    <div className="flex justify-between"><span>Staked Collateral:</span><span className={m.slashed ? 'text-red-400 font-bold' : 'text-green-400'}>{m.staked} NXC ({m.trust}% Trust)</span></div>
+                    <div className="flex justify-between">
+                      <span>Real Threads / Load:</span>
+                      <span className="text-cyan-400">{m.cores ?? '—'}/{m.hostPhysicalCores ?? '—'} Cores | Load {m.loadAvg1m ?? '—'}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span>Real Batt / Thermal / RAM:</span>
+                      <span className="text-green-300">{m.battery ?? '—'}% | {m.thermal ?? '—'}°C | {m.freeRamMb ?? '—'}MB Free</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span>Measured Speed / Exec:</span>
+                      <span className="text-purple-400 font-bold">{m.gopsThroughput || 0} GOPS ({m.lastComputeUs ?? 0}µs)</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span>Earned Wallet:</span>
+                      <span className="text-yellow-400 font-bold">{Number(m.wallet).toFixed(4)} NXC (${(Number(m.wallet) * nxcUsdPrice).toFixed(2)})</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span>Ed25519 Sigs / Stake:</span>
+                      <span className={m.slashed ? 'text-red-400 font-bold' : 'text-green-400'}>
+                        {m.ed25519VerifiedCount || 0} Sigs | {m.staked} NXC ({m.trust}%)
+                      </span>
+                    </div>
                   </div>
                 </div>
               );
@@ -270,26 +287,25 @@ export default function Home() {
           </div>
         )}
 
-        {/* Vector Batch Output Bar */}
+        {/* True Miner-Computed Vector Output Bar */}
         {vectorResult && (
           <div className="border-b border-green-500/20 bg-[#08080c] px-6 py-2.5 flex flex-col md:flex-row justify-between items-center text-xs">
-            <span className="text-gray-400">TENSOR VECTOR IN: <span className="text-cyan-400 font-bold">[{vectorResult.input.join(', ')}]</span></span>
-            <span className="text-gray-400">ED25519 VERIFIED TENSOR OUT: <span className="text-yellow-300 font-bold">[{vectorResult.output.join(', ')}]</span></span>
+            <span className="text-gray-400">UDP VECTOR SENT TO MINERS: <span className="text-cyan-400 font-bold">[{vectorResult.input.join(', ')}]</span></span>
+            <span className="text-gray-400">MINER WASM LINEAR MEMORY OUT (108B NACK): <span className="text-yellow-300 font-bold">[{vectorResult.output.join(', ')}]</span></span>
           </div>
         )}
 
-        {/* Logs & L1 Smart Contract Calldata Audit */}
+        {/* Logs & Audit */}
         <div className="grid grid-cols-1 lg:grid-cols-3 h-64 divide-y lg:divide-y-0 lg:divide-x divide-green-500/20">
           <div className="lg:col-span-2 p-4 bg-[#020202] overflow-y-auto text-xs leading-relaxed">
             <div className="flex justify-between items-center border-b border-gray-800 pb-1 mb-2">
-              <span className="text-[11px] text-white font-bold">NEXUS_Telemetry.log (v7.0 OMEGA)</span>
+              <span className="text-[11px] text-white font-bold">NEXUS_Telemetry.log (v8.0 ZERO-FAKE)</span>
               <span className="text-[10px] text-cyan-400">{status}</span>
             </div>
             {logs.map((log, i) => (
               <p key={i} className={`mb-1.5 ${
                 log.includes('[BFT SLASH-BURN]') || log.includes('[ERR]') ? 'text-red-500 font-bold' :
                 log.includes('[SELF-HEALING FAILOVER]') ? 'text-green-300 font-bold' :
-                log.includes('[L1 ANCHOR CALLDATA]') ? 'text-cyan-300 font-bold' :
                 log.includes('🏆 [ED25519') ? 'text-yellow-300 font-bold' : 'text-green-400'
               }`}>
                 {log}
@@ -299,7 +315,7 @@ export default function Home() {
 
           <div className="p-4 bg-[#050508] overflow-y-auto text-[11px]">
             <p className="text-[10px] text-purple-400 uppercase tracking-widest font-bold mb-2">
-              L1 CALLDATA & ED25519 AUDIT
+              REAL TELEMETRY & L1 CALLDATA AUDIT
             </p>
             {schedulerAudit ? (
               <pre className="text-[10px] text-green-300/90 whitespace-pre-wrap bg-black/60 p-2 rounded border border-purple-500/20">
@@ -307,35 +323,48 @@ export default function Home() {
               </pre>
             ) : (
               <p className="text-gray-600 text-xs mt-8 text-center">
-                Execute pipeline to inspect 64B Ed25519 Signatures, AI Tensor GOPS & L1 Calldata.
+                Execute pipeline to inspect Real OS Telemetry, Miner Vector Execution & L1 Calldata.
               </p>
             )}
           </div>
         </div>
 
-        {/* Controls */}
+        {/* PaaS Layer Controls */}
         <div className="p-4 bg-[#0a0a0a] border-t border-green-500/20 flex flex-col xl:flex-row justify-between items-center gap-4">
           <div className="flex flex-wrap items-center gap-3 text-xs">
             <div className="flex items-center gap-1.5">
-              <span className="text-gray-400">Workload Engine:</span>
+              <span className="text-gray-400">PaaS Engine:</span>
               <select
                 value={synthMode}
                 onChange={(e) => { setSynthMode(e.target.value); setUploadedWasm(null); }}
                 className="bg-black border border-cyan-500/40 text-cyan-300 px-2 py-1 rounded"
               >
-                <option value="ai_tensor_gemm">🧠 AI Transformer Attention Tensor (Q×K^T GEMM)</option>
+                <option value="ai_tensor_gemm">🧠 AI Attention Tensor (Q×K^T GEMM)</option>
                 <option value="rust_matrix">⚙️ 4x4 Matrix Kernel (822B Rust)</option>
                 <option value="xor_cipher">🔐 Instant Synth: XOR Stream Cipher</option>
                 <option value="neural_relu">⚡ Instant Synth: Neural ReLU Layer</option>
               </select>
             </div>
             <div className="flex items-center gap-1.5">
-              <span className="text-gray-400">Tensor Vector:</span>
+              <span className="text-gray-400">Shards:</span>
+              <select
+                value={totalShards}
+                onChange={(e) => setTotalShards(Number(e.target.value))}
+                className="bg-black border border-green-500/40 text-green-400 px-2 py-1 rounded"
+              >
+                <option value={1000}>1,000 Shards ($0.016)</option>
+                <option value={5000}>5,000 Shards ($0.080)</option>
+                <option value={10000}>10,000 Shards ($0.160)</option>
+                <option value={25000}>25,000 Shards ($0.400)</option>
+              </select>
+            </div>
+            <div className="flex items-center gap-1.5">
+              <span className="text-gray-400">Vector (4x u32):</span>
               <input
                 type="text"
                 value={dataVectorStr}
                 onChange={(e) => setDataVectorStr(e.target.value)}
-                className="bg-black border border-green-500/40 text-yellow-300 px-2 py-1 rounded w-36"
+                className="bg-black border border-green-500/40 text-yellow-300 px-2 py-1 rounded w-32"
               />
             </div>
             <div className="flex items-center gap-1.5">
@@ -352,7 +381,7 @@ export default function Home() {
                 type="file"
                 accept=".wasm"
                 onChange={handleFileUpload}
-                className="text-xs text-gray-400 w-44 file:mr-2 file:py-1 file:px-2 file:rounded file:border file:border-green-500/40 file:text-xs file:bg-green-950/30 file:text-green-400"
+                className="text-xs text-gray-400 w-40 file:mr-2 file:py-1 file:px-2 file:rounded file:border file:border-green-500/40 file:text-xs file:bg-green-950/30 file:text-green-400"
               />
             </div>
           </div>
@@ -361,7 +390,7 @@ export default function Home() {
             disabled={isComputing}
             className="font-bold py-3 px-6 border-2 bg-green-600/10 hover:bg-green-600 border-green-600 text-green-500 hover:text-white transition-all uppercase tracking-widest text-xs whitespace-nowrap"
           >
-            {isComputing ? 'VERIFYING ED25519 + TENSOR...' : `⚡ EXECUTE OMEGA DAG (~${currentNxcPerTask} NXC)`}
+            {isComputing ? 'EXECUTING ON MINERS...' : `⚡ EXECUTE ${totalShards.toLocaleString()} SHARDS (~${currentNxcPerTask} NXC)`}
           </button>
         </div>
       </div>

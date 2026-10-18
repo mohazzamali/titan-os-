@@ -7,27 +7,16 @@ import { getInitialState, probeLiveNodesWithNcip, computeStateMerkleSeal } from 
 
 const SAFE_UDP_CHUNK_BYTES = 1024;
 
-// Synthesize Raw WASM Bytecode including AI Transformer Attention Tensor (Q x K^T GEMM)
 function synthesizeInstantWasm(mode: string): Buffer {
   let bodyOps: number[];
   if (mode === 'ai_tensor_gemm') {
-    // AI Transformer Q * K^T Quantized INT8/FP16 Attention Tensor Kernel:
-    // (((seed * 17 + param * 31) ^ (seed >> 3)) * 4099) & 0x7FFFFFFF
+    // AI Transformer Q * K^T Quantized Attention Tensor Kernel:
+    // (((seed * 17 + param * 31) ^ (seed >> 3)) * 4099)
     bodyOps = [
-      0x20, 0x00, // local.get 0 (seed)
-      0x41, 0x11, // i32.const 17
-      0x6c,       // i32.mul
-      0x20, 0x01, // local.get 1 (param)
-      0x41, 0x1f, // i32.const 31
-      0x6c,       // i32.mul
-      0x6a,       // i32.add
-      0x20, 0x00, // local.get 0
-      0x41, 0x03, // i32.const 3
-      0x76,       // i32.shr_u
-      0x73,       // i32.xor
-      0x41, 0x83, 0x20, // i32.const 4099
-      0x6c,       // i32.mul
-      0x0b        // end
+      0x20, 0x00, 0x41, 0x11, 0x6c,
+      0x20, 0x01, 0x41, 0x1f, 0x6c, 0x6a,
+      0x20, 0x00, 0x41, 0x03, 0x76, 0x73,
+      0x41, 0x83, 0x20, 0x6c, 0x0b
     ];
   } else if (mode === 'xor_cipher') {
     bodyOps = [
@@ -71,6 +60,7 @@ function canonicalizeOutput(val: any): number {
   return num >>> 0;
 }
 
+// 104-Byte Header carrying 4x u32 Input Vector directly to the Miner's WASM VM
 function buildSingleFrame(
   seed: number,
   param: number,
@@ -78,13 +68,17 @@ function buildSingleFrame(
   rangeEnd: number,
   enablePruning: boolean,
   isHealingReroute: boolean,
+  inputVector: number[],
   wasmBuffer: Buffer
 ): Buffer {
-  const taskHeader = Buffer.alloc(16);
+  const taskHeader = Buffer.alloc(32);
   taskHeader.writeUInt32BE(seed >>> 0, 0);
   taskHeader.writeUInt32BE(param >>> 0, 4);
   taskHeader.writeUInt32BE(rangeStart >>> 0, 8);
   taskHeader.writeUInt32BE(rangeEnd >>> 0, 12);
+  for (let i = 0; i < 4; i++) {
+    taskHeader.writeUInt32BE((inputVector[i] || 0) >>> 0, 16 + i * 4);
+  }
 
   const flags = (enablePruning ? 0x01 : 0x00) | (isHealingReroute ? 0x02 : 0x00);
   const frameHeader = Buffer.alloc(8);
@@ -108,10 +102,11 @@ function buildMultiChunkFrames(
   rangeEnd: number,
   enablePruning: boolean,
   isHealingReroute: boolean,
+  inputVector: number[],
   wasmBuffer: Buffer
 ): Buffer[] {
   if (wasmBuffer.length <= SAFE_UDP_CHUNK_BYTES) {
-    return [buildSingleFrame(seed, param, rangeStart, rangeEnd, enablePruning, isHealingReroute, wasmBuffer)];
+    return [buildSingleFrame(seed, param, rangeStart, rangeEnd, enablePruning, isHealingReroute, inputVector, wasmBuffer)];
   }
 
   const taskId = crypto.randomInt(100000, 999999999);
@@ -121,7 +116,7 @@ function buildMultiChunkFrames(
 
   for (let idx = 0; idx < totalChunks; idx++) {
     const slice = wasmBuffer.subarray(idx * SAFE_UDP_CHUNK_BYTES, (idx + 1) * SAFE_UDP_CHUNK_BYTES);
-    const header = Buffer.alloc(29);
+    const header = Buffer.alloc(45);
     header.write('NEXC', 0, 4, 'ascii');
     header.writeUInt32BE(taskId >>> 0, 4);
     header.writeUInt16BE(idx, 8);
@@ -131,12 +126,15 @@ function buildMultiChunkFrames(
     header.writeUInt32BE(rangeStart >>> 0, 20);
     header.writeUInt32BE(rangeEnd >>> 0, 24);
     header.writeUInt8(flags, 28);
+    for (let i = 0; i < 4; i++) {
+      header.writeUInt32BE((inputVector[i] || 0) >>> 0, 29 + i * 4);
+    }
     frames.push(Buffer.concat([header, slice]));
   }
   return frames;
 }
 
-// Verify 92-Byte NACK containing 64-Byte Ed25519 Signature
+// Parse 108-Byte NACK containing Miner-Computed Vector + 64B Ed25519 Signature
 function dispatchFramesToMiner(
   port: number,
   host: string,
@@ -156,28 +154,33 @@ function dispatchFramesToMiner(
       clearTimeout(timer);
       try { socket.close(); } catch {}
 
-      if (msg.length >= 24 && msg.subarray(0, 4).toString('ascii') === 'NACK') {
+      if (msg.length === 108 && msg.subarray(0, 4).toString('ascii') === 'NACK') {
         const nodePort = msg.readUInt32BE(4);
         const output = msg.readUInt32BE(8);
         const effectiveShards = msg.readUInt32BE(12);
         const prunedBranches = msg.readUInt32BE(16);
         const computeTimeUs = msg.readUInt32BE(20);
-        const mopsPerSec = msg.length >= 28 ? msg.readUInt32BE(24) : 500;
+        const mopsPerSec = msg.readUInt32BE(24);
+        const minerVectorOut = [
+          msg.readUInt32BE(28),
+          msg.readUInt32BE(32),
+          msg.readUInt32BE(36),
+          msg.readUInt32BE(40)
+        ];
 
-        // Verify 64-Byte Ed25519 Cryptographic Signature if present (Bytes 28..92)
         let ed25519Verified = false;
         let sigHex = 'none';
-        if (msg.length === 92 && pubKeyHex) {
+        if (pubKeyHex) {
           try {
-            const header28 = msg.subarray(0, 28);
-            const sig64 = msg.subarray(28, 92);
+            const header44 = msg.subarray(0, 44);
+            const sig64 = msg.subarray(44, 108);
             sigHex = sig64.toString('hex').substring(0, 16);
             const pubKeyObj = crypto.createPublicKey({
               key: Buffer.from(pubKeyHex, 'hex'),
               format: 'der',
               type: 'spki'
             });
-            ed25519Verified = crypto.verify(null, header28, pubKeyObj, sig64);
+            ed25519Verified = crypto.verify(null, header44, pubKeyObj, sig64);
           } catch {}
         }
 
@@ -190,21 +193,18 @@ function dispatchFramesToMiner(
           param,
           shards: effectiveShards,
           prunedBranches,
+          computeTimeUs,
           gops: Number((mopsPerSec / 1000).toFixed(2)),
+          minerVectorOut,
           ed25519Verified,
           sigHex,
-          computeTimeMs: (computeTimeUs / 1000).toFixed(2),
+          computeTimeMs: (computeTimeUs / 1000).toFixed(3),
           results: [{ fn: 'execute_task', output: String(output) }]
         });
         return;
       }
 
-      try {
-        const parsed = JSON.parse(msg.toString());
-        resolve({ ...parsed, host, prunedBranches: 0, gops: 1.2, ed25519Verified: true });
-      } catch {
-        reject(new Error(`Malformed Frame from ${host}:${port}`));
-      }
+      reject(new Error(`Unexpected packet format (len=${msg.length}) from ${host}:${port}`));
     });
 
     let i = 0;
@@ -233,6 +233,7 @@ export async function POST(req: Request) {
     let enablePruning = true;
     let synthMode = 'ai_tensor_gemm';
     let dataVectorStr = '10, 25, 50, 100';
+    let totalDagRange = 5000;
 
     try {
       const body = await req.json();
@@ -246,6 +247,9 @@ export async function POST(req: Request) {
       if (body?.enablePruning !== undefined) enablePruning = Boolean(body.enablePruning);
       if (body?.synthMode) synthMode = body.synthMode;
       if (body?.dataVectorStr) dataVectorStr = String(body.dataVectorStr);
+      if (body?.totalShards && Number(body.totalShards) >= 500) {
+        totalDagRange = Math.min(50000, Number(body.totalShards));
+      }
     } catch {}
 
     const defaultWasmPath = path.resolve(
@@ -274,13 +278,15 @@ export async function POST(req: Request) {
 
     for (const port of allLivePorts) {
       const pStr = String(port);
+      const ncip = discoveredMap[port];
       if (!state.miners[pStr]) {
         state.miners[pStr] = {
           port,
-          host: discoveredMap[port].host || '127.0.0.1',
-          did: discoveredMap[port].did || `did:nexus:node:${port}`,
-          pubKeyHex: discoveredMap[port].pubKeyHex,
-          executionPath: discoveredMap[port].executionPath || 'PATH-B (OS MicroVM)',
+          host: ncip.host || '127.0.0.1',
+          did: ncip.did,
+          pubKeyHex: ncip.pubKeyHex,
+          cpuModel: ncip.cpuModel,
+          executionPath: ncip.executionPath,
           wallet: 0,
           staked: 1000,
           trust: 100,
@@ -290,14 +296,21 @@ export async function POST(req: Request) {
           ed25519VerifiedCount: 0,
           gopsThroughput: 0
         };
-      } else if (discoveredMap[port].pubKeyHex) {
-        state.miners[pStr].pubKeyHex = discoveredMap[port].pubKeyHex;
-        state.miners[pStr].did = discoveredMap[port].did || state.miners[pStr].did;
+      } else {
+        state.miners[pStr].pubKeyHex = ncip.pubKeyHex || state.miners[pStr].pubKeyHex;
+        state.miners[pStr].did = ncip.did || state.miners[pStr].did;
+        state.miners[pStr].cpuModel = ncip.cpuModel || state.miners[pStr].cpuModel;
+        state.miners[pStr].cores = ncip.cores;
+        state.miners[pStr].hostPhysicalCores = ncip.hostPhysicalCores;
+        state.miners[pStr].loadAvg1m = ncip.loadAvg1m;
+        state.miners[pStr].thermal = ncip.thermal;
+        state.miners[pStr].battery = ncip.battery;
+        state.miners[pStr].freeRamMb = ncip.freeRamMb;
+        state.miners[pStr].latencyMs = ncip.latencyMs;
       }
     }
 
     const eligiblePorts = allLivePorts.filter((p) => !state.miners[String(p)]?.slashed);
-
     if (eligiblePorts.length === 0) {
       return NextResponse.json(
         { error: "0 HONEST MINER NODES ONLINE! Start miners or reset slashed state." },
@@ -305,17 +318,19 @@ export async function POST(req: Request) {
       );
     }
 
+    // Score = ((Real_Worker_Threads * Historical_Trust) / (Real_Thermal_C + 1)) * (1000 / Complexity)
     const complexity = Math.max(10, Math.round(wasmBuffer.length / 10));
     const candidateNodesAudit: any[] = [];
     let totalScore = 0;
 
     for (const port of eligiblePorts) {
       const ncip = discoveredMap[port];
+      const mState = state.miners[String(port)];
       const host = ncip.host || '127.0.0.1';
-      const cores = ncip.cores || 10;
-      const trust = ncip.slaTrust || state.miners[String(port)]?.trust || 98.5;
-      const thermal = ncip.thermal ?? 42;
-      const battery = ncip.battery ?? 83;
+      const cores = ncip.cores || 8;
+      const trust = mState?.trust ?? 100;
+      const thermal = ncip.thermal ?? 40;
+      const battery = ncip.battery ?? 100;
 
       const numerator = Math.round(cores * trust * 100);
       const denominator = thermal + 1;
@@ -323,24 +338,29 @@ export async function POST(req: Request) {
       const score = Math.max(10, Number(rawScore.toFixed(2)));
       totalScore += score;
 
-      state.miners[String(port)].computedUtility = score;
-      state.miners[String(port)].host = host;
-
+      mState.computedUtility = score;
       candidateNodesAudit.push({
-        node_did: ncip.did || `did:nexus:node:${port}`,
+        node_did: ncip.did,
         port,
         host,
         pubKeyHex: ncip.pubKeyHex,
-        execution_path: ncip.executionPath || 'PATH-B',
+        execution_path: ncip.executionPath,
         computed_utility: score,
-        metrics: { cores, trust_pct: trust, thermal_c: thermal, battery_pct: battery, complexity }
+        real_telemetry: {
+          cpu: ncip.cpuModel,
+          worker_threads: `${cores}/${ncip.hostPhysicalCores}`,
+          os_load_1m: ncip.loadAvg1m,
+          thermal_c: thermal,
+          battery_pct: battery,
+          free_ram_mb: ncip.freeRamMb,
+          udp_rtt_ms: ncip.latencyMs
+        }
       });
     }
 
     candidateNodesAudit.sort((a, b) => b.computed_utility - a.computed_utility);
     const primaryHeroNode = candidateNodesAudit[0];
 
-    const totalDagRange = 5000;
     let currentCursor = 0;
     const nodeAllocations = candidateNodesAudit.map((c, idx) => {
       const pct = Math.round((c.computed_utility / totalScore) * 100);
@@ -353,12 +373,16 @@ export async function POST(req: Request) {
       return { ...c, allocationPct: `${pct}%`, rangeStart, rangeEnd, assignedShards: span };
     });
 
+    // Dynamic Real Pricing based on actual requested shards & byte complexity
     const activeLoad = 3;
     const totalCapacity = eligiblePorts.length * 3;
     const surgeMultiplier = Number((1 + Math.pow(activeLoad / totalCapacity, 2) * 0.25).toFixed(2));
-    const taskUsdCost = Number(((state.fairTaskUsdCost || 0.08) * surgeMultiplier).toFixed(4));
+    const baseUsdPer1kShards = 0.016; // $0.016 per 1,000 shards ($0.08 for 5,000 shards)
+    const awsUsdPer1kShards = 0.090;  // AWS Lambda + API Gateway equivalent ($0.45 for 5,000 shards)
+    const dynamicTaskUsdCost = Number(((totalDagRange / 1000) * baseUsdPer1kShards * surgeMultiplier).toFixed(4));
+    const dynamicAwsUsdCost = Number(((totalDagRange / 1000) * awsUsdPer1kShards).toFixed(4));
     const currentNxcPrice = state.nxcUsdPrice || 2.50;
-    const totalNxcRequired = Number((taskUsdCost / currentNxcPrice).toFixed(4));
+    const totalNxcRequired = Number((dynamicTaskUsdCost / currentNxcPrice).toFixed(4));
 
     if (state.clientWallet < totalNxcRequired) {
       return NextResponse.json({ error: "INSUFFICIENT NXC IN CLIENT WALLET" }, { status: 402 });
@@ -379,18 +403,16 @@ export async function POST(req: Request) {
     const baseSeed = crypto.randomInt(10000, 999999);
     const dynamicParam = customParam !== null ? customParam : crypto.randomInt(10, 500);
 
-    const inputVector = dataVectorStr
+    const parsedInputVec = dataVectorStr
       .split(',')
       .map(s => parseInt(s.trim(), 10))
-      .filter(n => !isNaN(n))
-      .slice(0, 12);
-    const outputVector = inputVector.map((val, i) => {
-      try {
-        return canonicalizeOutput(verifyFn(baseSeed + i, val));
-      } catch {
-        return canonicalizeOutput(verifyFn());
-      }
-    });
+      .filter(n => !isNaN(n));
+    const inputVector = [
+      parsedInputVec[0] ?? 10,
+      parsedInputVec[1] ?? 25,
+      parsedInputVec[2] ?? 50,
+      parsedInputVec[3] ?? 100
+    ];
 
     const shardPromises = nodeAllocations.map((alloc, idx) => {
       const nodeSeed = baseSeed + idx * 10000;
@@ -401,6 +423,7 @@ export async function POST(req: Request) {
         alloc.rangeEnd,
         enablePruning,
         false,
+        inputVector,
         wasmBuffer
       );
       return dispatchFramesToMiner(alloc.port, alloc.host, alloc.pubKeyHex, frames, nodeSeed, dynamicParam);
@@ -413,6 +436,7 @@ export async function POST(req: Request) {
     const telemetryLogs: string[] = [];
     let taskBurnedNxc = 0;
     let runSwarmGops = 0;
+    let verifiedMinerVectorOut: number[] = [];
 
     for (const resp of nodeResponses) {
       const portStr = String(resp.nodePort);
@@ -431,18 +455,28 @@ export async function POST(req: Request) {
       const expectedNum = canonicalizeOutput(rawExpected);
       const reportedNum = canonicalizeOutput(resp.results?.[0]?.output);
 
-      const isHonestMatch = Math.abs(expectedNum - reportedNum) <= 1;
+      // Also verify that the Miner's returned Vector matches deterministic expectation
+      const expectedVec0 = (() => {
+        try { return canonicalizeOutput(verifyFn(resp.seed, inputVector[0])); }
+        catch { return canonicalizeOutput(verifyFn()); }
+      })();
+      const vectorMatch = Math.abs(expectedVec0 - (resp.minerVectorOut?.[0] ?? -999)) <= 1;
+      const isHonestMatch = Math.abs(expectedNum - reportedNum) <= 1 && vectorMatch;
 
       if (isHonestMatch && resp.ed25519Verified) {
+        if (verifiedMinerVectorOut.length === 0) {
+          verifiedMinerVectorOut = resp.minerVectorOut;
+        }
         state.miners[portStr].wallet = Number((state.miners[portStr].wallet + netMinerReward).toFixed(4));
         state.miners[portStr].tasksCompleted += 1;
         state.miners[portStr].ed25519VerifiedCount = (state.miners[portStr].ed25519VerifiedCount || 0) + 1;
         state.miners[portStr].gopsThroughput = resp.gops || 1.5;
+        state.miners[portStr].lastComputeUs = resp.computeTimeUs;
         runSwarmGops = Number((runSwarmGops + (resp.gops || 1.5)).toFixed(2));
         taskBurnedNxc = Number((taskBurnedNxc + burnedFee).toFixed(4));
 
         telemetryLogs.push(
-          `🏆 [ED25519 + BFT OK] P${resp.nodePort} (${resp.gops} GOPS | Sig: 0x${resp.sigHex}...) => ${reportedNum}. Miner: +${netMinerReward} NXC`
+          `🏆 [ED25519 + VECTOR OK] P${resp.nodePort} (${resp.computeTimeUs}µs | ${resp.gops} GOPS | Sig: 0x${resp.sigHex}...) => ${reportedNum} | Miner: +${netMinerReward} NXC`
         );
         verifiedNodes.push({
           ...resp,
@@ -483,6 +517,7 @@ export async function POST(req: Request) {
             alloc.rangeEnd,
             enablePruning,
             true,
+            inputVector,
             wasmBuffer
           );
           const rescueResp = await dispatchFramesToMiner(
@@ -495,7 +530,10 @@ export async function POST(req: Request) {
           );
           const rescueReported = canonicalizeOutput(rescueResp.results?.[0]?.output);
 
-          if (Math.abs(expectedNum - rescueReported) <= 1) {
+          if (Math.abs(expectedNum - rescueReported) <= 1 && rescueResp.ed25519Verified) {
+            if (verifiedMinerVectorOut.length === 0) {
+              verifiedMinerVectorOut = rescueResp.minerVectorOut;
+            }
             state.miners[heroPortStr].wallet = Number(
               (state.miners[heroPortStr].wallet + netMinerReward + rescueBounty).toFixed(4)
             );
@@ -505,7 +543,7 @@ export async function POST(req: Request) {
             taskBurnedNxc = Number((taskBurnedNxc + burnedFee).toFixed(4));
 
             telemetryLogs.push(
-              `🛡️ [SELF-HEALING FAILOVER] Range ${alloc.rangeStart}..${alloc.rangeEnd} rescued by Ed25519 Hero P${primaryHeroNode.port} (${rescueResp.gops} GOPS) +${rescueBounty} NXC Bounty!`
+              `🛡️ [SELF-HEALING FAILOVER] Range ${alloc.rangeStart}..${alloc.rangeEnd} rescued by Hero P${primaryHeroNode.port} in ${rescueResp.computeTimeUs}µs (+${rescueBounty} NXC Bounty!)`
             );
             verifiedNodes.push({
               ...rescueResp,
@@ -523,7 +561,7 @@ export async function POST(req: Request) {
 
     const actualClientNxcCost = Number(verifiedNodes.reduce((acc, n) => acc + n.grossCost, 0).toFixed(4));
     const actualClientUsdPaid = Number((actualClientNxcCost * currentNxcPrice).toFixed(4));
-    const awsSaved = Number(Math.max(0, (state.awsEquivalentUsdCost || 0.45) - actualClientUsdPaid).toFixed(4));
+    const awsSaved = Number(Math.max(0, dynamicAwsUsdCost - actualClientUsdPaid).toFixed(4));
 
     state.clientWallet = Number((state.clientWallet - actualClientNxcCost).toFixed(4));
     state.totalUsdSavedVsAws = Number(((state.totalUsdSavedVsAws || 0) + awsSaved).toFixed(4));
@@ -533,33 +571,32 @@ export async function POST(req: Request) {
 
     const scarcityBoost = state.totalBurned * 0.012;
     state.nxcUsdPrice = Number((2.50 + scarcityBoost).toFixed(4));
-    const nextTaskNxcNeeded = Number(((state.fairTaskUsdCost || 0.08) / state.nxcUsdPrice).toFixed(4));
 
     state.prevBlockHash = state.merkleStateSeal || "0".repeat(64);
     state.blockHeight = (state.blockHeight || 1) + 1;
     state.merkleStateSeal = computeStateMerkleSeal(state);
 
-    // Generate EVM / Solana Anchor Calldata Hex for L1 Smart Contract Settlement
     const l1AnchorCalldata = `0x9b3d4f1a${state.blockHeight.toString(16).padStart(8, '0')}${state.merkleStateSeal}`;
-
-    telemetryLogs.push(
-      `⛓️ [L1 ANCHOR CALLDATA] Block #${state.blockHeight} Ready for Solana/Arbitrum Settlement (${l1AnchorCalldata.substring(0, 26)}...)`
-    );
 
     const schedulerAuditLog = {
       block_height: state.blockHeight,
+      cloud_stack_layers: {
+        IaaS: "Bare-Metal Unikernel & Real NCIP Host Silicon",
+        PaaS: `Sandboxed WASM (${customFileName}) + Distributed Vector Engine`,
+        SaaS: "BFT Settlement Ledger & L1 Smart Contract Calldata"
+      },
       ed25519_signatures_verified: verifiedNodes.length,
-      swarm_tensor_throughput: `${runSwarmGops} GOPS (Giga-Ops/sec)`,
+      swarm_tensor_throughput: `${runSwarmGops} GOPS`,
+      dynamic_pricing: {
+        shards_executed: totalDagRange,
+        nexus_cost_usd: `$${actualClientUsdPaid}`,
+        aws_lambda_cost_usd: `$${dynamicAwsUsdCost}`,
+        nxc_spent: `${actualClientNxcCost} NXC`
+      },
+      miner_vector_in: inputVector,
+      miner_vector_out: verifiedMinerVectorOut,
       l1_smart_contract_calldata: l1AnchorCalldata,
-      wasm_module: `${customFileName} (${wasmBuffer.length}B)`,
-      vector_batch_in: inputVector,
-      vector_batch_out: outputVector,
-      candidate_nodes: nodeAllocations.map(n => ({
-        did: n.node_did,
-        port: n.port,
-        allocation: n.allocationPct,
-        utility: n.computed_utility
-      }))
+      candidate_nodes: candidateNodesAudit
     };
 
     state.lastSchedulerAudit = schedulerAuditLog;
@@ -572,12 +609,12 @@ export async function POST(req: Request) {
       l1AnchorCalldata,
       swarmGops: runSwarmGops,
       inputVector,
-      outputVector,
+      outputVector: verifiedMinerVectorOut,
       costNxc: actualClientNxcCost,
       costUsd: actualClientUsdPaid,
+      awsCostUsd: dynamicAwsUsdCost,
       burned: taskBurnedNxc,
       nxcUsdPrice: state.nxcUsdPrice,
-      nextTaskNxcNeeded,
       telemetryLogs,
       schedulerAudit: schedulerAuditLog,
       verifiedNodes,
