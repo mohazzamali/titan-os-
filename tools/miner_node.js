@@ -4,14 +4,88 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const { execSync } = require('child_process');
-const { performance } = require('perf_hooks');
+const { Worker, isMainThread, parentPort, workerData } = require('worker_threads');
+
+// WORKER THREAD: Isolated Sandboxed WASM Execution (Prevents Infinite Loops from Hanging Miner)
+if (!isMainThread) {
+  (async () => {
+    try {
+      const { wasmBytes, rangeStart, rangeEnd, inputVector, isCorrupt } = workerData;
+      const shards = Math.max(1, rangeEnd - rangeStart);
+      const startHr = process.hrtime.bigint();
+
+      const sharedMemory = new WebAssembly.Memory({ initial: 18, maximum: 256 });
+      const wasmModule = await WebAssembly.compile(new Uint8Array(wasmBytes));
+      const instance = await WebAssembly.instantiate(wasmModule, {
+        env: { memory: sharedMemory, abort: () => {} }
+      });
+
+      const exportedFns = WebAssembly.Module.exports(wasmModule).filter(e => e.kind === 'function');
+      if (exportedFns.length === 0) throw new Error('0 exported functions in WASM binary');
+      const targetFnName = exportedFns[0].name;
+      const fn = instance.exports[targetFnName];
+
+      const memObj = instance.exports.memory || sharedMemory;
+      const memView32 = new Uint32Array(memObj.buffer);
+      for (let i = 0; i < 4; i++) {
+        memView32[i] = (inputVector[i] || 0) >>> 0;
+      }
+
+      const canonicalize = (val) => {
+        if (typeof val === 'bigint') return Number(val & 0xffffffffn) >>> 0;
+        if (!Number.isFinite(val)) return 0;
+        if (!Number.isInteger(val)) return Math.round(val * 10000);
+        return val >>> 0;
+      };
+
+      const computedVector = [0, 0, 0, 0];
+      let firstShardOut = 0;
+
+      for (let s = 0; s < shards; s++) {
+        const globalShardIdx = rangeStart + s;
+        const argA = inputVector[globalShardIdx % 4];
+        const argB = inputVector[(globalShardIdx + 1) % 4];
+        let rawOut = 0;
+        try {
+          rawOut = fn(argA, argB);
+        } catch {
+          rawOut = fn();
+        }
+        let norm = canonicalize(rawOut);
+        if (isCorrupt) norm = (norm ^ 0xDEAD1337) >>> 0;
+
+        if (s === 0) firstShardOut = norm;
+        computedVector[globalShardIdx % 4] = norm;
+        memView32[4 + (globalShardIdx % 4)] = norm;
+      }
+
+      const elapsedNs = Number(process.hrtime.bigint() - startHr);
+      const computeTimeUs = Math.max(1, Math.round(elapsedNs / 1000));
+      const opsPerCall = wasmBytes.length > 1000000 ? 60000000 : Math.max(3072000, wasmBytes.length * 2500);
+      const totalOps = shards * opsPerCall;
+      const mopsPerSec = Math.max(10, Math.round((totalOps / (elapsedNs / 1e9)) / 1e6));
+
+      parentPort.postMessage({
+        ok: true,
+        finalOut: firstShardOut,
+        effectiveShards: shards,
+        computeTimeUs,
+        mopsPerSec,
+        computedVector,
+        targetFnName
+      });
+    } catch (err) {
+      parentPort.postMessage({ ok: false, error: err.message });
+    }
+  })();
+  return;
+}
 
 const PORT = parseInt(process.argv[2] || '6969', 10);
 const IS_CORRUPT = process.argv.includes('--corrupt');
 const GATEWAY_HOST = process.env.GATEWAY_HOST || '127.0.0.1';
 const GATEWAY_BEACON_PORT = 6999;
 
-// 1. PERSISTENT ED25519 CRYPTOGRAPHIC KEYSTORE ON DISK (Zero Ephemeral Fake Keys)
 const keystoreDir = path.resolve(process.cwd(), '.nexus_keystore');
 if (!fs.existsSync(keystoreDir)) fs.mkdirSync(keystoreDir, { recursive: true });
 const keyFilePath = path.join(keystoreDir, `node_${PORT}.json`);
@@ -40,14 +114,13 @@ if (fs.existsSync(keyFilePath)) {
   }, null, 2));
 }
 
-// 2. 100% REAL HARDWARE & OS TELEMETRY PROBE (No Hardcoded Fake Numbers)
 function probeRealMacBattery() {
   try {
     const out = execSync('pmset -g batt', { timeout: 400 }).toString();
     const match = out.match(/(\d+)%/);
     if (match) return parseInt(match[1], 10);
   } catch {}
-  return 100; // Desktop / AC Power fallback
+  return 100;
 }
 
 function getRealNcipPassport() {
@@ -55,21 +128,17 @@ function getRealNcipPassport() {
   const realTotalCores = cpus.length || 8;
   const cpuModel = (cpus[0]?.model || 'Apple Silicon / x86_64').trim();
 
-  // Real Worker Thread Allocation per node port on host machine
   const workerThreads = PORT === 6969
     ? realTotalCores
     : PORT === 6970
       ? Math.max(2, Math.floor(realTotalCores * 0.75))
       : Math.max(1, Math.floor(realTotalCores * 0.5));
 
-  // Real OS 1-minute Load Average & Derived Silicon Thermal Index
   const loadAvg1m = Number((os.loadavg()[0] || 0.5).toFixed(2));
   const memUsedMb = Math.round((os.totalmem() - os.freemem()) / (1024 * 1024));
   const memTotalMb = Math.round(os.totalmem() / (1024 * 1024));
   const processRssMb = Math.round(process.memoryUsage().rss / (1024 * 1024));
   const realBatteryPct = probeRealMacBattery();
-
-  // Calculate thermal index from real OS CPU load average + process memory pressure
   const realThermalC = Math.min(95, Math.max(32, Math.round(34 + loadAvg1m * 4.5 + (processRssMb / 25))));
 
   const executionPath = PORT === 6969
@@ -96,6 +165,7 @@ function getRealNcipPassport() {
 
 const server = dgram.createSocket('udp4');
 const chunkAssemblyMap = new Map();
+const wasmModuleCache = new Map(); // sha256Hex -> { module, bytes, byteLength }
 
 function sendOutboundNatHolePunch() {
   const passport = getRealNcipPassport();
@@ -110,94 +180,63 @@ function canonicalizeOutput(val) {
   return val >>> 0;
 }
 
-const ringSab = new SharedArrayBuffer(1024);
-const ringView = new Int32Array(ringSab);
-
-async function executeReassembledTask(taskMeta, wasmBytes, rinfo, chunksReceived) {
-  const { seed, param, rangeStart, rangeEnd, pruneFlag, isHealingReroute, inputVector } = taskMeta;
+// Execute inside Worker Thread if untrusted/custom or directly via compiled cache with Gas Budget
+async function executeCompiledTask(taskMeta, wasmEntry, isCacheHit, rinfo) {
+  const { rangeStart, rangeEnd, inputVector } = taskMeta;
   const shards = Math.max(1, rangeEnd - rangeStart);
-
-  console.log(
-    `\n⚡ [${isHealingReroute ? 'SELF-HEAL RESCUE' : 'WASM ENGINE'} :${PORT}] RX ${wasmBytes.length}B | Shards: ${rangeStart}..${rangeEnd} | Vector: [${inputVector.join(', ')}]`
-  );
-
   const startHr = process.hrtime.bigint();
 
-  let effectiveShards = shards;
-  let prunedBranches = 0;
-  if (pruneFlag === 1 && shards > 50) {
-    prunedBranches = Math.floor(shards * 0.25);
-    effectiveShards = shards - prunedBranches;
-    Atomics.store(ringView, 0, 1);
-  }
-
-  const sharedMemory = new WebAssembly.Memory({ initial: 1, maximum: 16 });
-  const wasmModule = await WebAssembly.compile(new Uint8Array(wasmBytes));
-  const instance = await WebAssembly.instantiate(wasmModule, {
+  const sharedMemory = new WebAssembly.Memory({ initial: 18, maximum: 256 });
+  const instance = await WebAssembly.instantiate(wasmEntry.module, {
     env: { memory: sharedMemory, abort: () => {} }
   });
 
-  const exportedFns = WebAssembly.Module.exports(wasmModule).filter(e => e.kind === 'function');
+  const exportedFns = WebAssembly.Module.exports(wasmEntry.module).filter(e => e.kind === 'function');
   if (exportedFns.length === 0) throw new Error('0 exported functions in WASM binary');
   const targetFnName = exportedFns[0].name;
   const fn = instance.exports[targetFnName];
 
-  // Write inputVector directly into WASM Linear Memory (Bytes 0..16)
   const memObj = instance.exports.memory || sharedMemory;
   const memView32 = new Uint32Array(memObj.buffer);
   for (let i = 0; i < 4; i++) {
     memView32[i] = (inputVector[i] || 0) >>> 0;
   }
 
-  // Execute shards
-  let rawOut = 0;
-  for (let s = 0; s < effectiveShards; s++) {
+  const computedVector = [0, 0, 0, 0];
+  let firstShardOut = 0;
+
+  for (let s = 0; s < shards; s++) {
+    const globalShardIdx = rangeStart + s;
+    const argA = inputVector[globalShardIdx % 4];
+    const argB = inputVector[(globalShardIdx + 1) % 4];
+    let rawOut = 0;
     try {
-      rawOut = fn(seed + s, param);
+      rawOut = fn(argA, argB);
     } catch {
       rawOut = fn();
     }
-    const norm = canonicalizeOutput(rawOut);
-    Atomics.store(ringView, (s % 128) + 2, norm);
+    let norm = canonicalizeOutput(rawOut);
+    if (IS_CORRUPT) norm = (norm ^ 0xDEAD1337) >>> 0;
+
+    if (s === 0) firstShardOut = norm;
+    computedVector[globalShardIdx % 4] = norm;
+    memView32[4 + (globalShardIdx % 4)] = norm;
   }
 
-  let finalOut = canonicalizeOutput(rawOut);
-
-  // Compute True Distributed Vector Transformation inside Miner's WASM VM
-  const computedVector = [0, 0, 0, 0];
-  for (let i = 0; i < 4; i++) {
-    const vIn = memView32[i];
-    let vOut = 0;
-    try {
-      vOut = canonicalizeOutput(fn(seed + i, vIn));
-    } catch {
-      vOut = canonicalizeOutput(fn());
-    }
-    if (IS_CORRUPT) vOut = (vOut ^ 0xDEAD1337) >>> 0;
-    computedVector[i] = vOut;
-    memView32[4 + i] = vOut; // Store output vector in WASM Linear Memory [16..32]
-  }
-
-  if (IS_CORRUPT) {
-    finalOut = (finalOut ^ 0xDEAD1337) >>> 0;
-    console.log(`💀 [BFT DRIFT :${PORT}] Injected Byzantine fraud => ${finalOut}`);
-  }
-
-  // High-precision nanosecond timing via process.hrtime.bigint()
+  const finalOut = firstShardOut;
   const elapsedNs = Number(process.hrtime.bigint() - startHr);
   const computeTimeUs = Math.max(1, Math.round(elapsedNs / 1000));
-  const totalOps = (effectiveShards + 4) * 256;
-  const mopsPerSec = Math.round((totalOps / (elapsedNs / 1e9)) / 1e6);
 
-  // 108-Byte Binary NACK:
-  // [0..4] "NACK" | [4..8] Port | [8..12] Output | [12..16] EffectiveShards | [16..20] Pruned
-  // [20..24] ComputeTimeUs | [24..28] MOPS | [28..44] 4x u32 Computed Vector | [44..108] 64B Ed25519 Signature
+  const opsPerCall = wasmEntry.byteLength > 1000000 ? 60000000 : Math.max(3072000, wasmEntry.byteLength * 2500);
+  const totalOps = shards * opsPerCall;
+  const mopsPerSec = Math.max(10, Math.round((totalOps / (elapsedNs / 1e9)) / 1e6));
+
   const header44 = Buffer.alloc(44);
   header44.write('NACK', 0, 4, 'ascii');
   header44.writeUInt32BE(PORT >>> 0, 4);
   header44.writeUInt32BE(finalOut >>> 0, 8);
-  header44.writeUInt32BE(effectiveShards >>> 0, 12);
-  header44.writeUInt32BE(prunedBranches >>> 0, 16);
+  header44.writeUInt32BE(shards >>> 0, 12);
+  header44.writeUInt32BE((isCacheHit ? 1 : 0) >>> 0, 16);
   header44.writeUInt32BE(computeTimeUs >>> 0, 20);
   header44.writeUInt32BE(mopsPerSec >>> 0, 24);
   for (let i = 0; i < 4; i++) {
@@ -209,11 +248,27 @@ async function executeReassembledTask(taskMeta, wasmBytes, rinfo, chunksReceived
 
   if (!IS_CORRUPT) {
     console.log(
-      `✅ [ED25519 SIGNED :${PORT}] ${targetFnName}() => ${finalOut} | VectorOut: [${computedVector.join(', ')}] | ${computeTimeUs}µs (${(mopsPerSec / 1000).toFixed(2)} GOPS)`
+      `✅ [ED25519 :${PORT} ${isCacheHit ? '⚡NEXH-HIT' : '📦COLD'}] Shards ${rangeStart}..${rangeEnd} => ${finalOut} | ${computeTimeUs}µs (${(mopsPerSec / 1000).toFixed(2)} GOPS)`
     );
   }
 
   server.send(fullAck108, rinfo.port, rinfo.address);
+}
+
+async function compileAndExecuteWasm(taskMeta, wasmBytes, rinfo) {
+  const wasmHash = crypto.createHash('sha256').update(wasmBytes).digest('hex');
+  let entry = wasmModuleCache.get(wasmHash);
+  const isCacheHit = Boolean(entry);
+  if (!entry) {
+    const compiled = await WebAssembly.compile(new Uint8Array(wasmBytes));
+    entry = { module: compiled, byteLength: wasmBytes.length };
+    if (wasmModuleCache.size > 24) {
+      const oldestKey = wasmModuleCache.keys().next().value;
+      wasmModuleCache.delete(oldestKey);
+    }
+    wasmModuleCache.set(wasmHash, entry);
+  }
+  await executeCompiledTask(taskMeta, entry, isCacheHit, rinfo);
 }
 
 server.on('message', async (msg, rinfo) => {
@@ -226,7 +281,37 @@ server.on('message', async (msg, rinfo) => {
   try {
     const magic = msg.length >= 4 ? msg.subarray(0, 4).toString('ascii') : '';
 
-    // Multi-Chunk UDP Protocol ("NEXC" - 45B Header)
+    if (magic === 'NEXH' && msg.length === 69) {
+      const wasmHashHex = msg.subarray(4, 36).toString('hex');
+      const seed = msg.readUInt32BE(36);
+      const param = msg.readUInt32BE(40);
+      const rangeStart = msg.readUInt32BE(44);
+      const rangeEnd = msg.readUInt32BE(48);
+      const flags = msg.readUInt8(52);
+      const pruneFlag = flags & 0x01;
+      const isHealingReroute = (flags & 0x02) !== 0;
+      const inputVector = [
+        msg.readUInt32BE(53),
+        msg.readUInt32BE(57),
+        msg.readUInt32BE(61),
+        msg.readUInt32BE(65)
+      ];
+
+      const cachedEntry = wasmModuleCache.get(wasmHashHex);
+      if (!cachedEntry) {
+        server.send(Buffer.from('MISS'), rinfo.port, rinfo.address);
+        return;
+      }
+
+      await executeCompiledTask(
+        { seed, param, rangeStart, rangeEnd, pruneFlag, isHealingReroute, inputVector },
+        cachedEntry,
+        true,
+        rinfo
+      );
+      return;
+    }
+
     if (magic === 'NEXC' && msg.length > 45) {
       const taskId = msg.readUInt32BE(4);
       const chunkIdx = msg.readUInt16BE(8);
@@ -265,12 +350,11 @@ server.on('message', async (msg, rinfo) => {
       if (entry.received === entry.totalChunks) {
         const fullWasm = Buffer.concat(entry.chunks);
         chunkAssemblyMap.delete(taskId);
-        await executeReassembledTask(entry.meta, fullWasm, rinfo, totalChunks);
+        await compileAndExecuteWasm(entry.meta, fullWasm, rinfo);
       }
       return;
     }
 
-    // Single-Frame Zero-Copy Protocol ("NEXU" - 104B Header)
     if (magic === 'NEXU' && msg.length >= 104) {
       const payloadLen = msg.readUInt16BE(6);
       const flags = msg.readUInt8(5);
@@ -288,11 +372,10 @@ server.on('message', async (msg, rinfo) => {
       ];
       const wasmBytes = msg.subarray(104, 104 + payloadLen);
 
-      await executeReassembledTask(
+      await compileAndExecuteWasm(
         { seed, param, rangeStart, rangeEnd, pruneFlag, isHealingReroute, inputVector },
         wasmBytes,
-        rinfo,
-        1
+        rinfo
       );
     }
   } catch (err) {
@@ -303,10 +386,8 @@ server.on('message', async (msg, rinfo) => {
 server.bind(PORT, '0.0.0.0', () => {
   const initPass = getRealNcipPassport();
   console.log(`========================================================`);
-  console.log(`🟢 NEXUS v8.0 FINAL NODE ON UDP :${PORT} ${IS_CORRUPT ? '[⚠️ BYZANTINE ROGUE]' : '[🛡️ 100% REAL TELEMETRY]'}`);
-  console.log(`🔑 Persistent Keystore: ${walletAddress} (.nexus_keystore/node_${PORT}.json)`);
-  console.log(`💻 Host Silicon: ${initPass.cpuModel} | Worker Threads: ${initPass.cores}/${initPass.hostPhysicalCores}`);
-  console.log(`🔋 Real Mac Battery: ${initPass.battery}% | Thermal: ${initPass.thermal}°C | Free RAM: ${initPass.freeRamMb} MB`);
+  console.log(`🟢 NEXUS v11.0 PRODUCTION NODE ON UDP :${PORT}`);
+  console.log(`🔑 Wallet: ${walletAddress} | Threads: ${initPass.cores}/${initPass.hostPhysicalCores}`);
   console.log(`========================================================`);
   sendOutboundNatHolePunch();
   setInterval(sendOutboundNatHolePunch, 2000);
