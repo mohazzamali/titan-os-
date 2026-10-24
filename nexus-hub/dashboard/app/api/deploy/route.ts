@@ -6,7 +6,6 @@ import crypto from 'crypto';
 import dgram from 'dgram';
 import { performance } from 'perf_hooks';
 import { spawn } from 'child_process';
-import { spawn } from 'child_process';
 import { getInitialState, probeLiveNodesWithNcip, computeStateMerkleSeal } from '../state/route';
 
 const SAFE_UDP_CHUNK_BYTES = 8192;
@@ -448,7 +447,7 @@ export async function GET() {
       lanIp: getLocalLanIp(),
       blockHistory
     });
-  } catch (e: any) {
+  } catch {
     return NextResponse.json({ status: 'error', lanIp: '127.0.0.1', blockHistory: [] });
   }
 }
@@ -568,7 +567,6 @@ export async function POST(req: Request) {
       parsedInputVec[3] ?? 165
     ];
 
-    // If user passed >4 numbers in inputVector (e.g. from CLI/Python SDK) without batchVectors, auto-slice into batch partitions
     if (!batchVectors && parsedInputVec.length > 4) {
       batchVectors = [];
       for (let i = 0; i < parsedInputVec.length; i += 4) {
