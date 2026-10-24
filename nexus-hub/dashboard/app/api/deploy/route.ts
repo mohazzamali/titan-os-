@@ -100,7 +100,7 @@ function encodeS32Leb(val: number): number[] {
   return bytes;
 }
 
-export function buildCustomWasmBinary(spec: {
+function buildCustomWasmBinary(spec: {
   iterations: number;
   multiplier: number;
   addConstant: number;
