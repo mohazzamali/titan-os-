@@ -1,9 +1,11 @@
 import { NextResponse } from 'next/server';
 import fs from 'fs';
 import path from 'path';
+import os from 'os';
 import crypto from 'crypto';
 import dgram from 'dgram';
 import { performance } from 'perf_hooks';
+import { spawn } from 'child_process';
 import { spawn } from 'child_process';
 import { getInitialState, probeLiveNodesWithNcip, computeStateMerkleSeal } from '../state/route';
 
@@ -17,6 +19,20 @@ function withLedgerLock<T>(fn: () => Promise<T>): Promise<T> {
   return next;
 }
 
+function getLocalLanIp(): string {
+  try {
+    const nets = os.networkInterfaces();
+    for (const name of Object.keys(nets)) {
+      for (const net of nets[name] || []) {
+        if (net.family === 'IPv4' && !net.internal) {
+          return net.address;
+        }
+      }
+    }
+  } catch {}
+  return '127.0.0.1';
+}
+
 function canonicalizeOutput(val: any): number {
   if (typeof val === 'bigint') return Number(val & 0xffffffffn) >>> 0;
   const num = Number(val);
@@ -25,12 +41,9 @@ function canonicalizeOutput(val: any): number {
   return num >>> 0;
 }
 
-// LAYER 1: STATIC PRE-FLIGHT BYTECODE INFINITE LOOP BANNER
-// Scans WASM Code Section for unconditional `loop ... br 0` without `br_if` (0x0d), `br_table` (0x0e), `if` (0x04), or `return` (0x0f).
 function scanWasmForUnconditionalInfiniteLoops(wasmBuf: Buffer): { safe: boolean; reason?: string; loopsDetected: number } {
   let loopsDetected = 0;
   for (let i = 8; i < wasmBuf.length - 2; i++) {
-    // Opcode 0x03 followed by blocktype 0x40 (empty), 0x7f (i32), or 0x7e (i64) inside code section
     if (wasmBuf[i] === 0x03 && (wasmBuf[i + 1] === 0x40 || wasmBuf[i + 1] === 0x7f)) {
       loopsDetected++;
       let depth = 1;
@@ -58,7 +71,6 @@ function scanWasmForUnconditionalInfiniteLoops(wasmBuf: Buffer): { safe: boolean
   return { safe: true, loopsDetected };
 }
 
-// DYNAMIC WASM COMPILER FOR TOP 5 INDUSTRY KERNELS & LIVE STUDIO EDITS
 function encodeU32Leb(val: number): number[] {
   const bytes: number[] = [];
   let v = val >>> 0;
@@ -100,26 +112,21 @@ export function buildCustomWasmBinary(spec: {
   const mult = Number(spec.multiplier) || 1664525;
   const addC = Number(spec.addConstant) || 1013904223;
   const shift = Math.max(1, Math.min(31, Number(spec.shiftBits) || 13));
-  const mixOpcode = spec.mixOp === 'add' ? 0x6a : spec.mixOp === 'mul' ? 0x6c : 0x73; // 0x6a=add, 0x6c=mul, 0x73=xor
+  const mixOpcode = spec.mixOp === 'add' ? 0x6a : spec.mixOp === 'mul' ? 0x6c : 0x73;
 
-  // Local 0: seed (param 0), Local 1: param (param 1)
-  // Local 2: acc (i32), Local 3: counter (i32), Local 4: memPtr (i32)
   const bodyInstructions: number[] = [
-    0x01, 0x03, 0x7f, // 3 locals of type i32 (locals 2, 3, 4)
-    // acc = (seed ^ addConstant) + param
-    0x20, 0x00, // local.get 0
+    0x01, 0x03, 0x7f,
+    0x20, 0x00,
     0x41, ...encodeS32Leb(addC),
-    0x73,       // i32.xor
-    0x20, 0x01, // local.get 1
-    0x6a,       // i32.add
-    0x21, 0x02, // local.set 2 (acc)
-    // counter = iterations
+    0x73,
+    0x20, 0x01,
+    0x6a,
+    0x21, 0x02,
     0x41, ...encodeS32Leb(iters),
-    0x21, 0x03, // local.set 3 (counter)
+    0x21, 0x03,
   ];
 
   if (spec.injectInfiniteLoop) {
-    // Unconditional Infinite Loop (`loop (0x03 0x40) ... br 0 (0x0c 0x00) ... end (0x0b)`) to test Static Scanner Ban!
     bodyInstructions.push(
       0x03, 0x40,
       0x20, 0x02,
@@ -130,54 +137,47 @@ export function buildCustomWasmBinary(spec: {
       0x0b
     );
   } else {
-    // Bounded High-Performance Compute Loop + Linear Memory Matrix Writer at 0x30000
     bodyInstructions.push(
-      0x03, 0x40, // loop
-        // acc = (acc * mult) <mixOp> ((acc >>> shift) + param + counter)
-        0x20, 0x02, // local.get 2 (acc)
+      0x03, 0x40,
+        0x20, 0x02,
         0x41, ...encodeS32Leb(mult),
-        0x6c,       // i32.mul
-        0x20, 0x02, // local.get 2
+        0x6c,
+        0x20, 0x02,
         0x41, ...encodeS32Leb(shift),
-        0x76,       // i32.shr_u
-        0x20, 0x01, // local.get 1 (param)
-        0x6a,       // i32.add
-        0x20, 0x03, // local.get 3 (counter)
-        0x6a,       // i32.add
-        mixOpcode,  // i32.xor / i32.add / i32.mul
-        0x21, 0x02, // local.set 2 (acc)
+        0x76,
+        0x20, 0x01,
+        0x6a,
+        0x20, 0x03,
+        0x6a,
+        mixOpcode,
+        0x21, 0x02,
 
-        // Write snapshot to WASM Linear Memory [0x30000 + ((counter & 63) << 2)] = acc
         0x41, ...encodeS32Leb(0x30000),
         0x20, 0x03,
         0x41, 0x3f,
-        0x71,       // counter & 63
+        0x71,
         0x41, 0x02,
-        0x74,       // << 2
-        0x6a,       // + 0x30000
-        0x20, 0x02, // acc
-        0x36, 0x02, 0x00, // i32.store align=2 offset=0
+        0x74,
+        0x6a,
+        0x20, 0x02,
+        0x36, 0x02, 0x00,
 
-        // counter = counter - 1; if (counter > 0) br 0
         0x20, 0x03,
         0x41, 0x01,
-        0x6b,       // i32.sub
-        0x22, 0x03, // local.tee 3
+        0x6b,
+        0x22, 0x03,
         0x41, 0x00,
-        0x4a,       // i32.gt_s
-        0x0d, 0x00, // br_if 0
-      0x0b // end loop
+        0x4a,
+        0x0d, 0x00,
+      0x0b
     );
   }
 
-  bodyInstructions.push(
-    0x20, 0x02, // return acc
-    0x0b        // end function
-  );
+  bodyInstructions.push(0x20, 0x02, 0x0b);
 
   const typeSection = [0x01, 0x07, 0x01, 0x60, 0x02, 0x7f, 0x7f, 0x01, 0x7f];
   const funcSection = [0x03, 0x02, 0x01, 0x00];
-  const memSection  = [0x05, 0x03, 0x01, 0x00, 0x10]; // 16 pages (1024 KB)
+  const memSection  = [0x05, 0x03, 0x01, 0x00, 0x10];
   const expName = Buffer.from('execute_task', 'utf8');
   const memName = Buffer.from('memory', 'utf8');
   const exportPayload = [
@@ -435,8 +435,27 @@ function dispatchSmartToMiner(
   });
 }
 
+export async function GET() {
+  try {
+    const statePath = path.resolve(process.cwd(), 'state.json');
+    let blockHistory: any[] = [];
+    if (fs.existsSync(statePath)) {
+      const state = JSON.parse(fs.readFileSync(statePath, 'utf8'));
+      blockHistory = state.blockHistory || [];
+    }
+    return NextResponse.json({
+      status: 'ok',
+      lanIp: getLocalLanIp(),
+      blockHistory
+    });
+  } catch (e: any) {
+    return NextResponse.json({ status: 'error', lanIp: '127.0.0.1', blockHistory: [] });
+  }
+}
+
 export async function POST(req: Request) {
   try {
+    let clientSource = 'WEB_CONSOLE';
     let customWasmBase64: string | null = null;
     let customFileName = '';
     let presetKernelId = 'quant_monte_carlo';
@@ -447,6 +466,9 @@ export async function POST(req: Request) {
 
     try {
       const body = await req.json();
+      if (body?.clientSource && typeof body.clientSource === 'string') {
+        clientSource = body.clientSource;
+      }
       if (body?.wasmBase64 && typeof body.wasmBase64 === 'string') {
         customWasmBase64 = body.wasmBase64;
         customFileName = body.fileName || 'uploaded_custom.wasm';
@@ -495,7 +517,6 @@ export async function POST(req: Request) {
       binarySourceOrigin = `${fallback.label} (${wasmBuffer.length} Bytes)`;
     }
 
-    // RUN LAYER 1: PRE-FLIGHT STATIC BYTECODE INFINITE LOOP BANNER
     const loopAudit = scanWasmForUnconditionalInfiniteLoops(wasmBuffer);
     if (!loopAudit.safe) {
       return NextResponse.json(
@@ -508,16 +529,18 @@ export async function POST(req: Request) {
       );
     }
 
-    // autoSpawnMinersIfOffline
-
     let discoveredMap = await probeLiveNodesWithNcip();
     let allLivePorts = Object.keys(discoveredMap).map(Number).sort();
     if (allLivePorts.length < 3) {
-      const minerScript = path.resolve(process.cwd(), "../../tools/miner_node.js");
+      const minerScript = path.resolve(process.cwd(), '../../tools/miner_node.js');
       if (fs.existsSync(minerScript)) {
         for (const p of [6969, 6970, 6971]) {
           if (!allLivePorts.includes(p)) {
-            const child = spawn("node", [minerScript, String(p)], { detached: true, stdio: "ignore", cwd: path.resolve(process.cwd(), "../..") });
+            const child = spawn('node', [minerScript, String(p)], {
+              detached: true,
+              stdio: 'ignore',
+              cwd: path.resolve(process.cwd(), '../..')
+            });
             child.unref();
           }
         }
@@ -544,6 +567,19 @@ export async function POST(req: Request) {
       parsedInputVec[2] ?? 120,
       parsedInputVec[3] ?? 165
     ];
+
+    // If user passed >4 numbers in inputVector (e.g. from CLI/Python SDK) without batchVectors, auto-slice into batch partitions
+    if (!batchVectors && parsedInputVec.length > 4) {
+      batchVectors = [];
+      for (let i = 0; i < parsedInputVec.length; i += 4) {
+        batchVectors.push([
+          parsedInputVec[i] ?? 45,
+          parsedInputVec[(i + 1) % parsedInputVec.length] ?? 80,
+          parsedInputVec[(i + 2) % parsedInputVec.length] ?? 120,
+          parsedInputVec[(i + 3) % parsedInputVec.length] ?? 165
+        ]);
+      }
+    }
 
     const wasmSha256 = crypto.createHash('sha256').update(wasmBuffer).digest('hex');
     let cacheRecord = gatewayWasmCache.get(wasmSha256);
@@ -601,7 +637,6 @@ export async function POST(req: Request) {
       return { ...c, allocationPct: `${actualPct}%`, rangeStart, rangeEnd: rangeStart + actualSpan, assignedShards: actualSpan };
     });
 
-    // Dynamic SLA Gas Window: 60s for 1MB+ Heavy Scientific Binaries, 20s for Standard Kernels
     const gasSlaTimeoutMs = wasmBuffer.length > 1000000 ? 65000 : 25000;
 
     const swarmStartMs = performance.now();
@@ -679,7 +714,6 @@ export async function POST(req: Request) {
       cacheRecord.expectedMap.set(vecKey, baseline);
     }
 
-    // Optional Multi-Vector Batch Dataset Execution
     let batchResults: { row: number; input: number[]; output: number[]; assignedNode: number }[] = [];
     if (batchVectors && batchVectors.length > 0) {
       const sharedMemory = new WebAssembly.Memory({ initial: 18, maximum: 256 });
@@ -912,11 +946,29 @@ export async function POST(req: Request) {
       state.blockHeight = (state.blockHeight || 1) + 1;
       state.merkleStateSeal = computeStateMerkleSeal(state);
 
+      if (!Array.isArray(state.blockHistory)) state.blockHistory = [];
+      state.blockHistory.unshift({
+        blockHeight: state.blockHeight,
+        timestamp: new Date().toISOString(),
+        source: clientSource,
+        kernelName: customFileName,
+        sha256: wasmSha256.substring(0, 12),
+        shards: totalDagRange,
+        swarmWallMs: swarmParallelWallMs,
+        gops: runSwarmGops,
+        gasNxc: exactWalletDeduction,
+        burnedNxc: taskBurnedNxc,
+        outputVector: assembledMinerVector,
+        merkleSeal: state.merkleStateSeal.substring(0, 20)
+      });
+      if (state.blockHistory.length > 50) state.blockHistory = state.blockHistory.slice(0, 50);
+
       fs.writeFileSync(statePath, JSON.stringify(state, null, 2));
 
       return {
         blockHeight: state.blockHeight,
         merkleStateSeal: state.merkleStateSeal,
+        blockHistory: state.blockHistory,
         assembledMinerVector,
         scanlineBands,
         slashedNodes,
@@ -936,6 +988,7 @@ export async function POST(req: Request) {
       status: 'success',
       blockHeight: commitResult.blockHeight,
       merkleStateSeal: commitResult.merkleStateSeal,
+      blockHistory: commitResult.blockHistory,
       wasmInspector,
       inputVector,
       batchResults: batchResults.length > 0 ? batchResults : undefined,
