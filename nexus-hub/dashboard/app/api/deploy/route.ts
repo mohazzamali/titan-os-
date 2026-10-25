@@ -455,6 +455,7 @@ export async function GET() {
 export async function POST(req: Request) {
   try {
     let clientSource = 'WEB_CONSOLE';
+    let requestApiKey = req.headers.get('x-api-key') || 'nx_live_master_default99';
     let customWasmBase64: string | null = null;
     let customFileName = '';
     let presetKernelId = 'quant_monte_carlo';
@@ -465,6 +466,7 @@ export async function POST(req: Request) {
 
     try {
       const body = await req.json();
+      if (body?.apiKey && typeof body.apiKey === 'string') requestApiKey = body.apiKey;
       if (body?.clientSource && typeof body.clientSource === 'string') {
         clientSource = body.clientSource;
       }
@@ -936,6 +938,12 @@ export async function POST(req: Request) {
       }
 
       const exactWalletDeduction = Number((taskBurnedNxc + taskMinerMintedNxc).toFixed(4));
+      if (!state.apiKeys) state.apiKeys = {};
+      if (state.apiKeys[requestApiKey]) {
+        state.apiKeys[requestApiKey].balanceNxc = Number(Math.max(0, state.apiKeys[requestApiKey].balanceNxc - exactWalletDeduction).toFixed(4));
+        state.apiKeys[requestApiKey].totalSpentNxc = Number(((state.apiKeys[requestApiKey].totalSpentNxc || 0) + exactWalletDeduction).toFixed(4));
+        state.apiKeys[requestApiKey].jobsExecuted = (state.apiKeys[requestApiKey].jobsExecuted || 0) + 1;
+      }
       state.clientWallet = Number((state.clientWallet - exactWalletDeduction).toFixed(4));
       state.totalBurned = Number(((state.totalBurned || 0) + taskBurnedNxc).toFixed(4));
       state.circulatingSupply = Number(((state.genesisSupply || 21000000) - state.totalBurned).toFixed(4));
