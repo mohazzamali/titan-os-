@@ -286,6 +286,15 @@ export default function NexusCloudConsole() {
     }
 
     pCtx.putImageData(dstData, 0, 0);
+    const v0 = ((dst[0] << 16) | (dst[1] << 8) | dst[2]) >>> 0;
+    const v1 = ((dst[100] << 16) | (dst[101] << 8) | dst[102]) >>> 0;
+    const v2 = ((dst[200] << 16) | (dst[201] << 8) | dst[202]) >>> 0;
+    const v3 = ((dst[300] << 16) | (dst[301] << 8) | dst[302]) >>> 0;
+    fetch("/api/deploy", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ clientSource: "VISION_PIPELINE", presetKernelId: "dsp_fft_spectral", inputVector: [v0, v1, v2, v3], totalShards: 3 })
+    }).then(r => r.json()).then(d => { if (d?.blockHistory) setBlockHistory(d.blockHistory); fetchClusterState(); }).catch(() => {});
     setImageStats({
       width: w,
       height: h,
@@ -302,6 +311,16 @@ export default function NexusCloudConsole() {
     link.click();
   };
 
+  const exportBatchCsv = () => {
+    if (!execResult?.batchResults?.length) return;
+    const header = "Row,AssignedNode,Input_0,Input_1,Input_2,Input_3,Output_0,Output_1,Output_2,Output_3\n";
+    const rows = execResult.batchResults.map((r: any) => r.row + ",Node_" + r.assignedNode + "," + r.input.join(",") + "," + r.output.join(",")).join("\n");
+    const blob = new Blob([header + rows], { type: "text/csv" });
+    const link = document.createElement("a");
+    link.download = "nexus_batch_block_" + blockHeight + ".csv";
+    link.href = URL.createObjectURL(blob);
+    link.click();
+  };
   const exportExecutionReceipt = () => {
     if (!execResult) return;
     const blob = new Blob([JSON.stringify(execResult, null, 2)], { type: 'application/json' });
@@ -782,6 +801,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                       <h3 className="text-xs font-semibold text-emerald-300 uppercase tracking-wider">
                         Multi-Vector / Batch Execution Results ({execResult.batchResults.length} Partitions Processed)
                       </h3>
+                      <button onClick={exportBatchCsv} className="text-xs px-3 py-1 rounded bg-emerald-600 hover:bg-emerald-500 text-white font-mono">Download .CSV</button>
                     </div>
                     <div className="overflow-x-auto max-h-60">
                       <table className="w-full text-left text-xs font-mono">

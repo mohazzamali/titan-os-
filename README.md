@@ -1,10 +1,23 @@
-# ⚡ NEXUS TITAN v8.0 FINAL: Unified IaaS • PaaS • SaaS Decentralized Compute Fabric
+# Nexus Titan // Distributed WebAssembly Compute Platform
 
-**NEXUS Titan** is a zero-copy, BFT-verified decentralized cloud stack that unifies **IaaS** (`#![no_std]` Rust UEFI Unikernel & Real Hardware Telemetry), **PaaS** (Zero-Compiler WASM & Distributed Vector Engine), and **SaaS** (Ed25519 Merkle-Sealed Ledger & USD-Pegged BME Tokenomics).
+Production DePIN compute platform powered by Apple Silicon worker nodes, content-addressed UDP (NEXH / NEXC) transport, Ed25519 hardware attestation, pre-flight infinite-loop bytecode guards, and Burn-and-Mint Equilibrium (BME) token settlement.
 
-## 🏆 Key Capabilities (100% Zero Fake Data)
-- **IaaS Layer (Real Host Silicon Telemetry):** Live OS hardware probing (Apple Silicon / x86_64, physical/worker core allocation, live battery %, 1-minute OS load average, thermal index, free RAM MB, and microsecond `hrtime.bigint()` execution metrics).
-- **Persistent Ed25519 Cryptographic Identity:** Each miner persists an asymmetric Ed25519 keypair on disk (`.nexus_keystore/node_PORT.json`) and signs every `108-byte NACK` binary frame with a 64-byte signature.
-- **PaaS Layer (Distributed WASM Vector & Multi-Chunk Engine):** Supports custom `.wasm` uploads (auto-chunked via `NEXC` protocol) and instant in-RAM bytecode synthesis (`AI Attention Tensor GEMM`, `XOR Stream Cipher`, `Neural ReLU`), reading/writing `4x u32` vectors directly through Miner WASM Linear Memory.
-- **Autonomous Self-Healing Failover:** Byzantine nodes (`--corrupt`) are caught in `O(1)` time, slashed `-250 NXC`, and their failed shard ranges are automatically re-routed to the highest-utility honest node in microseconds with a `+5 NXC` bounty.
-- **SaaS Layer (USD-Pegged BME & Merkle Chain):** Compute pricing scales dynamically by shard count (`82% cheaper than AWS Lambda`), burning `30%` of fees from the fixed `21,000,000 NXC` supply and generating L1 Smart Contract settlement calldata on every block.
+## Quick Start (1-Command Launch)
+
+    ./start_nexus.sh
+
+Open http://localhost:3000 in your browser.
+
+## Core Capabilities
+
+1. Compute Deployment & Batch Runner: Run 5 built-in industry .wasm kernels or upload custom .wasm binaries up to 50 MB with single-vector or multi-row CSV batch execution.
+2. In-Platform Live WASM Studio & Loop Guard: Edit loop iterations, folding operators (XOR, ADD, MUL), and constants in the browser, assemble into a real .wasm binary, and verify pre-flight static infinite-loop rejection.
+3. Standalone CLI & Zero-Dependency Python SDK:
+
+    node tools/nexus_cli.js --kernel zk_sha256_merkle --vector "45,80,120,165,256,720" --shards 8
+    python3 tools/nexus_sdk.py
+
+4. Medical & Vision Convolution Pipeline: Real-time 3x3 Sobel Edge, CLAHE contrast enhancement, and radiograph negative filtering backed by M4 cluster attestation.
+5. Immutable Block Explorer & LAN Node Onboarding:
+
+    GATEWAY_HOST=<GATEWAY_LAN_IP> node tools/miner_node.js 6972
