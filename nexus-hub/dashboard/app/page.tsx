@@ -51,6 +51,8 @@ export default function NexusCloudConsole() {
   const [topupAmountInr, setTopupAmountInr] = useState(1000);
   const [topupUtr, setTopupUtr] = useState('');
   const [customDomainName, setCustomDomainName] = useState('compute.yourdomain.in');
+  const [isAutoDemoRunning, setIsAutoDemoRunning] = useState(false);
+  const [demoCaption, setDemoCaption] = useState<string | null>(null);
 
   const [selectedPreset, setSelectedPreset] = useState<string>('quant_monte_carlo');
   const [dataVectorStr, setDataVectorStr] = useState("45, 80, 120, 165, 256, 720");
@@ -356,6 +358,122 @@ export default function NexusCloudConsole() {
     link.click();
   };
 
+  
+  const sleepMs = (ms: number) => new Promise(r => setTimeout(r, ms));
+
+  const startAutomatedInvestorDemo = async () => {
+    if (isAutoDemoRunning) return;
+    let recorder: MediaRecorder | null = null;
+    let stream: MediaStream | null = null;
+    const chunks: BlobPart[] = [];
+
+    try {
+      if (navigator.mediaDevices && navigator.mediaDevices.getDisplayMedia) {
+        stream = await navigator.mediaDevices.getDisplayMedia({
+          video: { frameRate: 30 },
+          audio: false,
+          // @ts-ignore
+          preferCurrentTab: true
+        });
+        recorder = new MediaRecorder(stream, { mimeType: 'video/webm;codecs=vp9' });
+        recorder.ondataavailable = (e) => {
+          if (e.data && e.data.size > 0) chunks.push(e.data);
+        };
+        recorder.onstop = () => {
+          const blob = new Blob(chunks, { type: 'video/webm' });
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement('a');
+          a.href = url;
+          a.download = 'nexus_titan_investor_demo.webm';
+          a.click();
+          if (stream) stream.getTracks().forEach(t => t.stop());
+        };
+        recorder.start(200);
+      }
+    } catch {
+      // Continues auto-pilot tour even if user skips screen-share dialog
+    }
+
+    setIsAutoDemoRunning(true);
+
+    // SCENE 1: Multi-Node WASM Compute Deployment
+    setActiveView('wasm_cloud');
+    setErrorBanner(null);
+    setSelectedPreset('zk_sha256_merkle');
+    setTotalShards(8);
+    setDemoCaption('Scene 1/5: Dispatching Zero-Knowledge SHA-256 Merkle WASM Kernel across 3 Apple M4 Nodes over UDP...');
+    await sleepMs(2500);
+    await deployWorkload();
+    await sleepMs(4500);
+
+    // SCENE 2: Live WASM Studio & Static Infinite-Loop Security Guard
+    setActiveView('wasm_studio');
+    setStudioTestInfinite(true);
+    setDemoCaption('Scene 2/5: Testing Pre-Flight Bytecode Scanner — Blocking Unconditional Infinite Loops before dispatch...');
+    await sleepMs(2500);
+    await deployWorkload({
+      customName: 'malicious_infinite_loop.wasm',
+      iterations: 250000,
+      multiplier: 1664525,
+      addConstant: 1013904223,
+      shiftBits: 11,
+      mixOp: 'xor',
+      injectInfiniteLoop: true
+    });
+    await sleepMs(4000);
+    setStudioTestInfinite(false);
+    setErrorBanner(null);
+
+    // SCENE 3: External Software RPC Bridge
+    setActiveView('software_bridge');
+    setDemoCaption('Scene 3/5: Offloading External Python / Node.js Workload via REST RPC Bridge...');
+    await sleepMs(2000);
+    await testLiveSoftwareBridge();
+    await sleepMs(4000);
+
+    // SCENE 4: Immutable Block Explorer & Merkle State Seals
+    setActiveView('block_explorer');
+    setDemoCaption('Scene 4/5: Verifying Immutable Block Audit Log, Ed25519 Hardware Signatures & Merkle State Root...');
+    await sleepMs(4500);
+
+    // SCENE 5: Multi-Tenant API Keys & Instant UPI (INR) Top-Up
+    setActiveView('billing_keys');
+    setDemoCaption('Scene 5/5: Issuing Customer API Key (nx_live_...) & Settling Instant ₹1,000 INR UPI Compute Top-Up...');
+    await sleepMs(2000);
+    const resKey = await fetch('/api/keys', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'create_key', owner: 'QuantFund_Alpha_AI', initialNxc: 25 })
+    });
+    const keyData = await resKey.json();
+    const createdKeyStr = keyData?.createdKey?.key || selectedTopupKey;
+    if (keyData?.apiKeys) setApiKeysList(keyData.apiKeys);
+    await sleepMs(2000);
+
+    await fetch('/api/keys', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        action: 'topup_wallet',
+        apiKey: createdKeyStr,
+        paymentMethod: 'UPI_INR',
+        amountInr: 1000,
+        referenceId: 'UTR994827164028'
+      })
+    });
+    await fetchClusterState();
+    await sleepMs(3500);
+
+    setDemoCaption('✅ Nexus Titan Investor Demo Complete! Downloading Video...');
+    await sleepMs(1500);
+
+    if (recorder && recorder.state !== 'inactive') {
+      recorder.stop();
+    }
+    setDemoCaption(null);
+    setIsAutoDemoRunning(false);
+  };
+
   const resetClusterLedger = async () => {
     await fetch('/api/state', { method: 'DELETE' });
     setExecResult(null);
@@ -487,6 +605,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 {allKnownPorts.length} Active Nodes
               </span>
             </div>
+            <button
+              onClick={startAutomatedInvestorDemo}
+              disabled={isAutoDemoRunning}
+              className="text-xs font-semibold text-white bg-purple-600 hover:bg-purple-500 disabled:bg-purple-900 border border-purple-400/40 px-3.5 py-1.5 rounded-md transition shadow-lg"
+            >
+              {isAutoDemoRunning ? '🔴 Recording Auto-Demo...' : '🎬 Auto-Record Demo Video'}
+            </button>
             <button
               onClick={resetClusterLedger}
               className="text-xs text-slate-300 hover:text-white bg-slate-800/80 hover:bg-slate-700 border border-slate-700 px-3 py-1.5 rounded-md transition"
@@ -1504,6 +1629,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         </div>
 
       </div>
+      {demoCaption && (
+        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 bg-black/90 border border-emerald-500/60 text-white px-6 py-3.5 rounded-xl shadow-2xl flex items-center gap-3 max-w-3xl w-[92%]">
+          <span className="h-3 w-3 rounded-full bg-red-500 animate-ping shrink-0" />
+          <span className="text-xs md:text-sm font-mono text-emerald-300 font-medium">{demoCaption}</span>
+        </div>
+      )}
     </div>
   );
 }
