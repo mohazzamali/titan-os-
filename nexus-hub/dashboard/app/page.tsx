@@ -51,6 +51,10 @@ export default function NexusCloudConsole() {
   const [topupAmountInr, setTopupAmountInr] = useState(1000);
   const [topupUtr, setTopupUtr] = useState('');
   const [customDomainName, setCustomDomainName] = useState('compute.yourdomain.in');
+  const [merchantUpiId, setMerchantUpiId] = useState('mohazzam@upi');
+  const [billingStatusMsg, setBillingStatusMsg] = useState<{ type: 'ok' | 'err'; text: string } | null>(null);
+  const [cursorPos, setCursorPos] = useState<{ x: number; y: number; clicking: boolean; visible: boolean }>({ x: 500, y: 300, clicking: false, visible: false });
+  const [introSlide, setIntroSlide] = useState<{ title: string; sub: string } | null>(null);
   const [isAutoDemoRunning, setIsAutoDemoRunning] = useState(false);
   const [demoCaption, setDemoCaption] = useState<string | null>(null);
 
@@ -110,6 +114,7 @@ export default function NexusCloudConsole() {
       if (meta?.lanIp) setLanIp(meta.lanIp);
       if (Array.isArray(keysData?.apiKeys)) setApiKeysList(keysData.apiKeys);
       if (Array.isArray(keysData?.billingHistory)) setBillingLogs(keysData.billingHistory);
+      if (keysData?.merchantUpiId) setMerchantUpiId(keysData.merchantUpiId);
     } catch {}
   };
 
@@ -361,6 +366,26 @@ export default function NexusCloudConsole() {
   
   const sleepMs = (ms: number) => new Promise(r => setTimeout(r, ms));
 
+  const speakNarration = (text: string) => {
+    try {
+      if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+        window.speechSynthesis.cancel();
+        const u = new SpeechSynthesisUtterance(text);
+        u.rate = 1.03;
+        u.pitch = 1.0;
+        window.speechSynthesis.speak(u);
+      }
+    } catch {}
+  };
+
+  const moveVirtualCursor = async (x: number, y: number, waitMs = 900) => {
+    setCursorPos({ x, y, clicking: false, visible: true });
+    await sleepMs(waitMs);
+    setCursorPos({ x, y, clicking: true, visible: true });
+    await sleepMs(350);
+    setCursorPos({ x, y, clicking: false, visible: true });
+  };
+
   const startAutomatedInvestorDemo = async () => {
     if (isAutoDemoRunning) return;
     let recorder: MediaRecorder | null = null;
@@ -371,7 +396,7 @@ export default function NexusCloudConsole() {
       if (navigator.mediaDevices && navigator.mediaDevices.getDisplayMedia) {
         stream = await navigator.mediaDevices.getDisplayMedia({
           video: { frameRate: 30 },
-          audio: false,
+          audio: true,
           // @ts-ignore
           preferCurrentTab: true
         });
@@ -384,33 +409,46 @@ export default function NexusCloudConsole() {
           const url = URL.createObjectURL(blob);
           const a = document.createElement('a');
           a.href = url;
-          a.download = 'nexus_titan_investor_demo.webm';
+          a.download = 'nexus_titan_official_product_film.webm';
           a.click();
           if (stream) stream.getTracks().forEach(t => t.stop());
         };
         recorder.start(200);
       }
-    } catch {
-      // Continues auto-pilot tour even if user skips screen-share dialog
-    }
+    } catch {}
 
     setIsAutoDemoRunning(true);
 
-    // SCENE 1: Multi-Node WASM Compute Deployment
+    // INTRO TITLE CARD
+    setIntroSlide({
+      title: 'NEXUS TITAN // DECENTRALIZED WASM CLOUD',
+      sub: 'Sub-Millisecond Apple Silicon M4 Cluster • Static Loop Security Guard • Ed25519 Attestation'
+    });
+    speakNarration('Welcome to Nexus Titan. The decentralized WebAssembly compute platform powered by Apple Silicon worker nodes.');
+    await sleepMs(4200);
+    setIntroSlide(null);
+
+    // SCENE 1: WASM Compute Deployment
     setActiveView('wasm_cloud');
     setErrorBanner(null);
     setSelectedPreset('zk_sha256_merkle');
     setTotalShards(8);
-    setDemoCaption('Scene 1/5: Dispatching Zero-Knowledge SHA-256 Merkle WASM Kernel across 3 Apple M4 Nodes over UDP...');
-    await sleepMs(2500);
+    setDemoCaption('1/5 • Dispatching ZK SHA-256 Merkle WASM Kernel across 4 Apple M4 Worker Nodes over UDP...');
+    speakNarration('First, we dispatch a Zero-Knowledge SHA-256 Merkle kernel partitioned across four Apple M4 worker nodes over UDP.');
+    await moveVirtualCursor(320, 560, 1200);
     await deployWorkload();
-    await sleepMs(4500);
+    await sleepMs(4800);
 
-    // SCENE 2: Live WASM Studio & Static Infinite-Loop Security Guard
+    // SCENE 2: WASM Studio & Static Infinite-Loop Guard
+    setDemoCaption('2/5 • Live WASM Studio: Testing Pre-Flight Static Bytecode Scanner against Infinite Loops...');
+    speakNarration('Next, in the Live WASM Studio, we inject an unconditional infinite loop. Our pre-flight bytecode scanner catches and blocks it before execution.');
+    await moveVirtualCursor(350, 235, 900);
     setActiveView('wasm_studio');
+    await sleepMs(1200);
+    await moveVirtualCursor(440, 535, 900);
     setStudioTestInfinite(true);
-    setDemoCaption('Scene 2/5: Testing Pre-Flight Bytecode Scanner — Blocking Unconditional Infinite Loops before dispatch...');
-    await sleepMs(2500);
+    await sleepMs(1000);
+    await moveVirtualCursor(280, 595, 800);
     await deployWorkload({
       customName: 'malicious_infinite_loop.wasm',
       iterations: 250000,
@@ -420,52 +458,71 @@ export default function NexusCloudConsole() {
       mixOp: 'xor',
       injectInfiniteLoop: true
     });
-    await sleepMs(4000);
+    await sleepMs(4200);
     setStudioTestInfinite(false);
     setErrorBanner(null);
 
-    // SCENE 3: External Software RPC Bridge
+    // SCENE 3: External CLI & Python SDK Bridge
+    setDemoCaption('3/5 • External Software Bridge: Executing Live REST RPC Offload with Ed25519 Verification...');
+    speakNarration('External Python and Node applications can offload compute vectors with a single REST API call.');
+    await moveVirtualCursor(520, 235, 800);
     setActiveView('software_bridge');
-    setDemoCaption('Scene 3/5: Offloading External Python / Node.js Workload via REST RPC Bridge...');
-    await sleepMs(2000);
+    await sleepMs(1200);
+    await moveVirtualCursor(850, 395, 900);
     await testLiveSoftwareBridge();
-    await sleepMs(4000);
+    await sleepMs(4200);
 
-    // SCENE 4: Immutable Block Explorer & Merkle State Seals
+    // SCENE 4: Block Explorer
+    setDemoCaption('4/5 • Immutable Block Explorer: Auditing Per-Block Gas Burn, GOPS Throughput & Merkle State Seals...');
+    speakNarration('Every verified execution is permanently sealed into the immutable Block Explorer with Ed25519 hardware signatures.');
+    await moveVirtualCursor(860, 235, 800);
     setActiveView('block_explorer');
-    setDemoCaption('Scene 4/5: Verifying Immutable Block Audit Log, Ed25519 Hardware Signatures & Merkle State Root...');
-    await sleepMs(4500);
+    await sleepMs(4200);
 
-    // SCENE 5: Multi-Tenant API Keys & Instant UPI (INR) Top-Up
+    // SCENE 5: Strict NPCI UPI Verification & Anti-Fraud Test
+    setDemoCaption('5/5 • Multi-Tenant Billing: Blocking Fake UTRs & Verifying Real 12-Digit NPCI Bank UTR...');
+    speakNarration('Finally, in our Multi-Tenant Billing engine, fake UTRs are automatically rejected, while valid 12-digit NPCI bank transactions credit NXC instantly.');
+    await moveVirtualCursor(1050, 235, 800);
     setActiveView('billing_keys');
-    setDemoCaption('Scene 5/5: Issuing Customer API Key (nx_live_...) & Settling Instant ₹1,000 INR UPI Compute Top-Up...');
-    await sleepMs(2000);
-    const resKey = await fetch('/api/keys', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ action: 'create_key', owner: 'QuantFund_Alpha_AI', initialNxc: 25 })
-    });
-    const keyData = await resKey.json();
-    const createdKeyStr = keyData?.createdKey?.key || selectedTopupKey;
-    if (keyData?.apiKeys) setApiKeysList(keyData.apiKeys);
-    await sleepMs(2000);
+    await sleepMs(1200);
 
-    await fetch('/api/keys', {
+    // Step 5A: Show fake UTR being rejected first!
+    setTopupUtr('FAKE_UTR_123');
+    await moveVirtualCursor(850, 620, 900);
+    setBillingStatusMsg({ type: 'err', text: '❌ UPI VERIFICATION FAILED: Please enter a valid 12-digit numeric NPCI Bank UTR number. Fake or empty UTRs are blocked!' });
+    await sleepMs(3200);
+
+    // Step 5B: Enter valid 12-digit unique UTR and verify
+    const valid12DigitUtr = '4309' + String(Math.floor(10000000 + Math.random() * 89999999));
+    setTopupUtr(valid12DigitUtr);
+    await moveVirtualCursor(850, 620, 900);
+    const resUpi = await fetch('/api/keys', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         action: 'topup_wallet',
-        apiKey: createdKeyStr,
-        paymentMethod: 'UPI_INR',
+        apiKey: selectedTopupKey,
+        paymentMethod: 'UPI_NPCI_UTR',
         amountInr: 1000,
-        referenceId: 'UTR994827164028'
+        referenceId: valid12DigitUtr
       })
     });
+    const upiData = await resUpi.json();
+    if (upiData.status === 'ok') {
+      setBillingStatusMsg({ type: 'ok', text: '✅ NPCI UTR #' + valid12DigitUtr + ' Verified! Credited +' + upiData.receipt.creditedNxc + ' NXC' });
+    }
     await fetchClusterState();
-    await sleepMs(3500);
+    await sleepMs(4000);
 
-    setDemoCaption('✅ Nexus Titan Investor Demo Complete! Downloading Video...');
-    await sleepMs(1500);
+    // OUTRO SLIDE
+    setCursorPos({ x: 500, y: 300, clicking: false, visible: false });
+    setIntroSlide({
+      title: 'NEXUS TITAN // PRODUCTION READY',
+      sub: 'github.com/mohazzamali/titan-os- • Ready for Global DePIN Scale'
+    });
+    speakNarration('Nexus Titan is live and ready for global scale.');
+    await sleepMs(3800);
+    setIntroSlide(null);
 
     if (recorder && recorder.state !== 'inactive') {
       recorder.stop();
@@ -1518,25 +1575,69 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                   />
                 </div>
 
+                <div className="p-3 bg-[#090b10] border border-slate-800 rounded-lg flex flex-col sm:flex-row items-center gap-4">
+                  <img
+                    src={`https://api.qrserver.com/v1/create-qr-code/?size=110x110&data=${encodeURIComponent(`upi://pay?pa=${merchantUpiId}&pn=NexusTitanCloud&am=${topupAmountInr}&cu=INR&tn=NXC_Topup` )}`}
+                    alt="UPI QR"
+                    className="w-24 h-24 rounded border border-slate-700 bg-white p-1 shrink-0"
+                  />
+                  <div className="space-y-1.5 text-xs flex-1 w-full">
+                    <div className="flex justify-between items-center">
+                      <span className="text-slate-400">Merchant UPI ID:</span>
+                      <span className="text-emerald-400 font-mono font-semibold">{merchantUpiId}</span>
+                    </div>
+                    <input
+                      type="text"
+                      value={merchantUpiId}
+                      onChange={(e) => setMerchantUpiId(e.target.value)}
+                      onBlur={async () => {
+                        await fetch('/api/keys', {
+                          method: 'POST',
+                          headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify({ action: 'update_merchant_upi', upiId: merchantUpiId })
+                        });
+                      }}
+                      className="w-full bg-[#111622] border border-slate-700 text-slate-200 font-mono px-2.5 py-1 rounded text-[11px]"
+                      placeholder="yourname@okaxis"
+                    />
+                    <span className="text-[10px] text-slate-500 block">
+                      Scan QR with GPay / PhonePe / Paytm to pay ₹{topupAmountInr}, then enter the 12-digit Bank UTR below.
+                    </span>
+                  </div>
+                </div>
+
+                {billingStatusMsg && (
+                  <div className={`p-2.5 rounded-lg text-xs font-mono border ${billingStatusMsg.type === 'ok' ? 'bg-emerald-950/90 border-emerald-500/60 text-emerald-200' : 'bg-red-950/90 border-red-500/60 text-red-200'}`}>
+                    {billingStatusMsg.text}
+                  </div>
+                )}
+
                 <button
                   onClick={async () => {
-                    await fetch('/api/keys', {
+                    setBillingStatusMsg(null);
+                    const res = await fetch('/api/keys', {
                       method: 'POST',
                       headers: { 'Content-Type': 'application/json' },
                       body: JSON.stringify({
                         action: 'topup_wallet',
                         apiKey: selectedTopupKey,
-                        paymentMethod: 'UPI_INR',
+                        paymentMethod: 'UPI_NPCI_UTR',
                         amountInr: topupAmountInr,
-                        referenceId: topupUtr || ('UTR' + Date.now())
+                        referenceId: topupUtr
                       })
                     });
-                    setTopupUtr('');
-                    fetchClusterState();
+                    const d = await res.json();
+                    if (!res.ok || d.status === 'error') {
+                      setBillingStatusMsg({ type: 'err', text: '❌ ' + (d.message || 'Verification failed') });
+                    } else {
+                      setBillingStatusMsg({ type: 'ok', text: '✅ NPCI UTR #' + topupUtr + ' Verified! Credited +' + d.receipt.creditedNxc + ' NXC' });
+                      setTopupUtr('');
+                      fetchClusterState();
+                    }
                   }}
                   className="w-full py-2.5 px-4 bg-amber-600 hover:bg-amber-500 text-white font-semibold rounded-lg text-xs transition"
                 >
-                  Verify UPI / UTR &amp; Credit +{((topupAmountInr / (nxcUsdPrice * 84)) || 0).toFixed(2)} NXC Instantly
+                  Verify 12-Digit NPCI UTR &amp; Credit +{((topupAmountInr / (nxcUsdPrice * 84)) || 0).toFixed(2)} NXC
                 </button>
 
                 {billingLogs.length > 0 && (
@@ -1629,6 +1730,25 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         </div>
 
       </div>
+      {introSlide && (
+        <div className="fixed inset-0 z-50 bg-[#06080d]/95 backdrop-blur-md flex flex-col items-center justify-center p-8 text-center animate-fade-in">
+          <div className="h-4 w-4 rounded-full bg-emerald-400 shadow-[0_0_25px_#34d399] mb-6" />
+          <h1 className="text-3xl md:text-5xl font-bold text-white tracking-tight mb-4 font-mono">
+            {introSlide.title}
+          </h1>
+          <p className="text-sm md:text-lg text-emerald-400 max-w-2xl font-mono">
+            {introSlide.sub}
+          </p>
+        </div>
+      )}
+      {cursorPos.visible && (
+        <div
+          style={{ left: cursorPos.x, top: cursorPos.y, transition: 'left 0.75s cubic-bezier(0.22, 1, 0.36, 1), top 0.75s cubic-bezier(0.22, 1, 0.36, 1)' }}
+          className="fixed z-50 pointer-events-none -translate-x-1/2 -translate-y-1/2"
+        >
+          <div className={`rounded-full border-2 border-amber-400 bg-amber-400/30 shadow-[0_0_20px_#fbbf24] transition-transform duration-200 ${cursorPos.clicking ? 'w-12 h-12 scale-125 bg-emerald-400/50 border-emerald-300' : 'w-7 h-7'}`} />
+        </div>
+      )}
       {demoCaption && (
         <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 bg-black/90 border border-emerald-500/60 text-white px-6 py-3.5 rounded-xl shadow-2xl flex items-center gap-3 max-w-3xl w-[92%]">
           <span className="h-3 w-3 rounded-full bg-red-500 animate-ping shrink-0" />

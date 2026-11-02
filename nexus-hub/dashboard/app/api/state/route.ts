@@ -4,7 +4,7 @@ import path from 'path';
 import dgram from 'dgram';
 import crypto from 'crypto';
 
-const DEFAULT_PORTS = [6969, 6970, 6971];
+const DEFAULT_PORTS = [6969, 6970, 6971, 6972];
 const LEDGER_SECRET = 'NEXUS_TITAN_RING0_MERKLE_SEAL_KEY_v8';
 
 const globalAny = globalThis as any;

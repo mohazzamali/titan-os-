@@ -437,6 +437,18 @@ function dispatchSmartToMiner(
 export async function GET() {
   try {
     const statePath = path.resolve(process.cwd(), 'state.json');
+    if (fs.existsSync(statePath)) {
+      const preState = JSON.parse(fs.readFileSync(statePath, 'utf8'));
+      if (preState.apiKeys && Object.keys(preState.apiKeys).length > 0) {
+        const keyRecord = preState.apiKeys[requestApiKey];
+        if (!keyRecord) {
+          return NextResponse.json({ status: 'error', error: 'API AUTH REJECTED (401): Invalid API Key (' + requestApiKey + '). Generate a valid key in Tab 6.' }, { status: 401 });
+        }
+        if (Number(keyRecord.balanceNxc) < 0.01) {
+          return NextResponse.json({ status: 'error', error: 'INSUFFICIENT NXC BALANCE (402): API Key ' + requestApiKey + ' has ' + keyRecord.balanceNxc + ' NXC. Please top-up via UPI in Tab 6.' }, { status: 402 });
+        }
+      }
+    }
     let blockHistory: any[] = [];
     if (fs.existsSync(statePath)) {
       const state = JSON.parse(fs.readFileSync(statePath, 'utf8'));
