@@ -9,6 +9,8 @@ import { spawn } from 'child_process';
 import { getInitialState, probeLiveNodesWithNcip, computeStateMerkleSeal } from '../state/route';
 
 const SAFE_UDP_CHUNK_BYTES = 8192;
+const activeNodeJobsMap = new Map<number, number>();
+let concurrentQueueDepth = 0;
 const gatewayWasmCache = new Map<string, { module: WebAssembly.Module; expectedMap: Map<string, { vec: number[]; matrix: number[]; nativeMs: number; memPages: number }> }>();
 
 let ledgerMutex: Promise<any> = Promise.resolve();
@@ -614,13 +616,17 @@ export async function POST(req: Request) {
     const candidateNodesAudit: any[] = [];
     let totalScore = 0;
 
+    concurrentQueueDepth++;
     for (const port of allLivePorts) {
       const ncip = discoveredMap[port];
       const host = ncip.host || '127.0.0.1';
       const cores = ncip.cores || 8;
       const thermal = ncip.thermal ?? 40;
-      const rawScore = Math.floor(((cores * 10000) / (thermal + 1)) * (1000 / complexity)) / 100;
-      const score = Math.max(10, Number(rawScore.toFixed(2)));
+      const activeJobsOnNode = activeNodeJobsMap.get(port) || 0;
+      const latencyPenalty = Math.max(1, ncip.latencyMs || 1);
+      // Smart Utility Formula: rewards cores, penalizes active load, thermal, and latency
+      const rawScore = ((cores * 12000) / ((thermal + 10) * (activeJobsOnNode * 3 + 1) * latencyPenalty)) * (1000 / complexity);
+      const score = Math.max(5, Number((rawScore / 10).toFixed(2)));
       totalScore += score;
 
       candidateNodesAudit.push({
@@ -629,17 +635,22 @@ export async function POST(req: Request) {
         host,
         pubKeyHex: ncip.pubKeyHex,
         execution_path: ncip.executionPath,
+        activeJobs: activeJobsOnNode,
         computed_utility: score
       });
     }
 
-    candidateNodesAudit.sort((a, b) => b.computed_utility - a.computed_utility);
+    // Sort by highest utility + lowest active load, then pick optimal K subset of nodes (max = totalDagRange)
+    candidateNodesAudit.sort((a, b) => (b.computed_utility - a.computed_utility) || (a.port - b.port));
+    const optimalNodeCount = Math.max(1, Math.min(candidateNodesAudit.length, totalDagRange));
+    const selectedWorkerSubset = candidateNodesAudit.slice(0, optimalNodeCount);
+    selectedWorkerSubset.forEach(n => activeNodeJobsMap.set(n.port, (activeNodeJobsMap.get(n.port) || 0) + 1));
     const primaryHeroNode = candidateNodesAudit[0];
 
     let currentCursor = 0;
-    const baseShards = Math.floor(totalDagRange / candidateNodesAudit.length);
-    let remainder = totalDagRange % candidateNodesAudit.length;
-    const nodeAllocations = candidateNodesAudit.map((c) => {
+    const baseShards = Math.floor(totalDagRange / selectedWorkerSubset.length);
+    let remainder = totalDagRange % selectedWorkerSubset.length;
+    const nodeAllocations = selectedWorkerSubset.map((c) => {
       const span = Math.max(1, baseShards + (remainder > 0 ? (remainder--, 1) : 0));
       const rangeStart = currentCursor;
       const rangeEnd = Math.min(totalDagRange, currentCursor + span);
@@ -678,7 +689,13 @@ export async function POST(req: Request) {
       return dispatchSmartToMiner(alloc.port, alloc.host, alloc.pubKeyHex, hashFrame, fallbackFrames, nodeSeed, nodeParam, gasSlaTimeoutMs);
     });
 
-    const nodeResponses = await Promise.all(shardPromises);
+    let nodeResponses: any[] = [];
+    try {
+      nodeResponses = await Promise.all(shardPromises);
+    } finally {
+      selectedWorkerSubset.forEach(n => activeNodeJobsMap.set(n.port, Math.max(0, (activeNodeJobsMap.get(n.port) || 1) - 1)));
+      concurrentQueueDepth = Math.max(0, concurrentQueueDepth - 1);
+    }
     const swarmParallelWallMs = Number((performance.now() - swarmStartMs).toFixed(2));
 
     const vecKey = inputVector.join(',');
@@ -808,12 +825,14 @@ export async function POST(req: Request) {
       }
 
       const kbSize = wasmBuffer.length / 1024;
+      const currentPriceUsd = state.nxcUsdPrice || 2.50;
+      // USD-Pegged Gas Index: As NXC price rises, NXC required per job scales down proportionally so tokens never run out!
+      const priceScalingFactor = 2.50 / Math.max(2.50, currentPriceUsd);
+      const opcodeDensityFactor = Math.max(1, loopAudit.loopsDetected * 1.35);
       const batchMultiplier = batchResults.length > 0 ? Math.max(1, batchResults.length * 0.25) : 1;
-      const baseFee = 0.0060;
-      const shardFee = totalDagRange * 0.0020 * batchMultiplier;
-      const bandwidthFee = (anyCacheHit ? 0.0005 : Math.min(0.0800, kbSize * 0.000005));
-      const memoryFee = memPages * 0.0001;
-      const dynamicGasNxc = Number((baseFee + shardFee + bandwidthFee + memoryFee).toFixed(4));
+      const surgeMultiplier = 1 + Math.min(0.5, concurrentQueueDepth * 0.05);
+      const rawUsdTargetFee = (0.015 + (totalDagRange * 0.005 * batchMultiplier * opcodeDensityFactor) + (anyCacheHit ? 0.001 : Math.min(0.20, kbSize * 0.00002)) + (memPages * 0.00025)) * surgeMultiplier;
+      const dynamicGasNxc = Number(Math.max(0.0001, (rawUsdTargetFee / 2.50) * priceScalingFactor).toFixed(4));
 
       const scanlineBands: any[] = [];
       const slashedNodes: any[] = [];
@@ -957,8 +976,12 @@ export async function POST(req: Request) {
         state.apiKeys[requestApiKey].jobsExecuted = (state.apiKeys[requestApiKey].jobsExecuted || 0) + 1;
       }
       state.clientWallet = Number((state.clientWallet - exactWalletDeduction).toFixed(4));
-      state.totalBurned = Number(((state.totalBurned || 0) + taskBurnedNxc).toFixed(4));
-      state.circulatingSupply = Number(((state.genesisSupply || 21000000) - state.totalBurned).toFixed(4));
+      // True BME: 50% of burned tokens are recycled via Epoch Emission Pool to sustain perpetual miner rewards
+      const epochMintedRecycle = Number((taskBurnedNxc * 0.50).toFixed(4));
+      const netDeflationBurn = Number((taskBurnedNxc - epochMintedRecycle).toFixed(4));
+      state.totalBurned = Number(((state.totalBurned || 0) + netDeflationBurn).toFixed(4));
+      // Asymptotic Supply Floor: Never allow circulating supply to drop below 1,000,000 NXC
+      state.circulatingSupply = Number(Math.max(1000000, (state.genesisSupply || 21000000) - state.totalBurned).toFixed(4));
       state.nxcUsdPrice = Number((2.50 + (state.totalBurned * 0.12) + (state.blockHeight * 0.0035)).toFixed(4));
       state.prevBlockHash = state.merkleStateSeal || "0".repeat(64);
       state.blockHeight = (state.blockHeight || 1) + 1;
